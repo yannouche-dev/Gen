@@ -91,22 +91,44 @@ export class VastApi {
     });
   }
 
-  async listInstances(quiet = false): Promise<VastInstance[]> {
-    const res = await requestJson<{ instances?: VastInstance[] }>(`${this.base}/api/v0/instances/?owner=me`, {
-      cat: 'vast',
-      headers: this.headers(),
-      quiet,
-    });
-    return res.instances ?? [];
+  /** Liste v1 paginée (GET /api/v1/instances/) : /api/v0/instances/ répond désormais 410 « deprecated ». */
+  async listInstances(quiet = false, selectFilters: Record<string, unknown> = {}): Promise<VastInstance[]> {
+    const out: VastInstance[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const q = new URLSearchParams({
+        select_filters: JSON.stringify(selectFilters),
+        order_by: JSON.stringify([{ col: 'id', dir: 'desc' }]),
+        limit: '25',
+      });
+      if (after) q.set('after_token', after);
+      const res: { instances?: VastInstance[]; next_token?: string | null } = await requestJson(`${this.base}/api/v1/instances/?${q}`, {
+        cat: 'vast',
+        headers: this.headers(),
+        quiet,
+      });
+      out.push(...(res.instances ?? []));
+      after = res.next_token || null;
+      if (!after) break;
+    }
+    return out;
   }
 
+  /** Détail d'une instance (v0, encore utilisé par la CLI officielle) ; repli sur la liste v1 si retiré. */
   async getInstance(id: number, quiet = false): Promise<VastInstance | null> {
-    const res = await requestJson<{ instances?: VastInstance | null }>(`${this.base}/api/v0/instances/${id}/?owner=me`, {
-      cat: 'vast',
-      headers: this.headers(),
-      quiet,
-    });
-    return res.instances ?? null;
+    try {
+      const res = await requestJson<{ instances?: VastInstance | null }>(`${this.base}/api/v0/instances/${id}/?owner=me`, {
+        cat: 'vast',
+        headers: this.headers(),
+        quiet,
+        silentStatuses: [410],
+      });
+      return res.instances ?? null;
+    } catch (e) {
+      if (!(e instanceof HttpError) || e.status !== 410) throw e;
+      const list = await this.listInstances(quiet, { id: { eq: id } });
+      return list.find((i) => i.id === id) ?? null;
+    }
   }
 
   setState(id: number, state: 'running' | 'stopped'): Promise<{ success?: boolean }> {

@@ -133,7 +133,19 @@ export function createVastMock({ shared, origin, speed = 1 }) {
       return send(res, 200, { success: true, new_contract: id, instance_api_key: 'cak_' + 'f'.repeat(40) });
     }
 
-    if (url.pathname === '/api/v0/instances/' && req.method === 'GET') return send(res, 200, { instances: [...state.instances.values()].map(view) });
+    // Comme le vrai Vast : l'ancienne liste v0 est retirée (410), la liste v1 est paginée.
+    if (url.pathname === '/api/v0/instances/' && req.method === 'GET') {
+      return send(res, 410, { success: false, error: 'deprecated_endpoint', msg: '/api/v0/instances/ is deprecated. Use /api/v1/instances/ instead.' });
+    }
+    if (url.pathname === '/api/v1/instances/' && req.method === 'GET') {
+      const filters = JSON.parse(url.searchParams.get('select_filters') || '{}');
+      const limit = Math.min(25, Number(JSON.parse(url.searchParams.get('limit') || '25')));
+      const after = Number(url.searchParams.get('after_token') || 0);
+      const all = [...state.instances.values()].filter((i) => matches(i, filters)).sort((a, b) => b.id - a.id);
+      const page = all.slice(after, after + limit);
+      const next = after + limit < all.length ? String(after + limit) : null;
+      return send(res, 200, { instances: page.map(view), instances_found: all.length, total_instances: state.instances.size, next_token: next });
+    }
 
     if ((m = url.pathname.match(/^\/api\/v0\/instances\/(\d+)\/$/))) {
       const inst = state.instances.get(Number(m[1]));

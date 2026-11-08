@@ -30,7 +30,9 @@ describe('Worker proxy Vast', () => {
     expect((await call('/api/v0/machines/', { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(404);
     expect((await call('/api/v0/auth/apikeys/', { method: 'POST', headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(404);
     expect((await call('/api/v0/instances/1/', { method: 'POST', headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(404);
-    expect((await call('/api/v0/instances/?api_key=x', { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(400);
+    expect((await call('/api/v0/instances/?api_key=x', { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(404);
+    expect((await call('/api/v1/instances/?api_key=x', { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(400);
+    expect((await call('/api/v1/instances/?limit=25&q=' + 'x'.repeat(3000), { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(400);
     expect((await call('/api/v0/users/current/')).status).toBe(401);
   });
   it('limite les URL de logs à S3 Vast', async () => {
@@ -52,6 +54,10 @@ describe('Worker proxy Vast', () => {
       expect(seen[0].url).toBe('https://console.vast.ai/api/v0/users/current/');
       expect(seen[0].headers.get('Authorization')).toBe('Bearer abcdefgh123');
       expect(seen[0].headers.get('Cookie')).toBeNull();
+      const q = '?select_filters=%7B%7D&order_by=%5B%7B%22col%22%3A%22id%22%2C%22dir%22%3A%22desc%22%7D%5D&limit=25&after_token=abc';
+      const r2 = await call('/api/v1/instances/' + q, { headers: { Authorization: 'Bearer abcdefgh123' } });
+      expect(r2.status).toBe(200);
+      expect(seen[1].url).toBe('https://console.vast.ai/api/v1/instances/' + q);
     } finally {
       globalThis.fetch = orig;
     }

@@ -18,14 +18,16 @@ const MAX_BODY = 64 * 1024;
 export const ROUTES = [
   ['POST', /^\/api\/v0\/bundles\/$/], // recherche d'offres
   ['PUT', /^\/api\/v0\/asks\/\d{1,12}\/$/], // création d'une instance depuis une offre
-  ['GET', /^\/api\/v0\/instances\/$/], // liste de mes instances
+  ['GET', /^\/api\/v1\/instances\/$/], // liste de mes instances (v1 paginée ; /api/v0/instances/ est retirée)
   ['GET', /^\/api\/v0\/instances\/\d{1,12}\/$/], // détail d'une instance
   ['PUT', /^\/api\/v0\/instances\/\d{1,12}\/$/], // démarrer / arrêter / label
   ['DELETE', /^\/api\/v0\/instances\/\d{1,12}\/$/], // détruire
   ['PUT', /^\/api\/v0\/instances\/request_logs\/\d{1,12}\/$/], // demander les logs
   ['GET', /^\/api\/v0\/users\/current\/$/], // compte et crédit
 ];
-const ALLOWED_QUERY = new Set(['owner']);
+// Paramètres de requête autorisés (owner pour le détail v0 ; filtres et pagination pour la liste v1).
+const ALLOWED_QUERY = new Set(['owner', 'select_filters', 'order_by', 'limit', 'after_token', 'select_cols']);
+const MAX_QUERY = 2048;
 
 function corsHeaders(origin) {
   return {
@@ -103,6 +105,7 @@ export default {
     for (const k of url.searchParams.keys()) {
       if (!ALLOWED_QUERY.has(k)) return json(400, { error: 'query_not_allowed', param: k }, allowed);
     }
+    if (url.search.length > MAX_QUERY) return json(414, { error: 'query_too_long' }, allowed);
     const auth = request.headers.get('Authorization') || '';
     if (!/^Bearer [A-Za-z0-9._~+/=-]{8,200}$/.test(auth)) {
       return json(401, { error: 'missing_api_key' }, allowed);
