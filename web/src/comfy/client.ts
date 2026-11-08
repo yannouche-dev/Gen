@@ -14,7 +14,8 @@ export interface FileRef {
 export interface AgentStatus {
   version: number;
   now: number;
-  steps: Record<string, { state: string; msg?: string; ts?: number }>;
+  /** Étapes : début / fin (secondes), sous-tâche en cours (msg) et avancement (pct, 0..1). */
+  steps: Record<string, { state: string; msg?: string; ts?: number; started?: number; ended?: number; pct?: number }>;
   models: {
     state: string;
     families: string[];

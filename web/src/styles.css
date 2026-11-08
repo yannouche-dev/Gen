@@ -328,9 +328,29 @@ input[type='range'] {
 }
 .step {
   display: grid;
-  grid-template-columns: 28px 1fr;
+  grid-template-columns: 28px 1fr auto;
   align-items: center;
   column-gap: 6px;
+}
+.step-time {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.step-running .step-label {
+  font-weight: 700;
+}
+.boot-overall {
+  margin: 4px 0 12px;
+}
+.boot-overall-head {
+  margin-bottom: 4px;
+}
+.step-files .file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
 }
 .step-icon {
   width: 24px;
@@ -360,7 +380,7 @@ input[type='range'] {
 }
 .step-detail,
 .step progress {
-  grid-column: 2;
+  grid-column: 2 / 4;
 }
 .step-detail {
   color: var(--muted);

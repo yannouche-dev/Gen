@@ -57,6 +57,11 @@ export class GenerationError extends Error {
 
 export interface GenInput {
   client: ComfyClient;
+  /**
+   * Client courant de l'instance. Le tunnel peut changer d'adresse (cloudflared redémarré) : la génération
+   * suit alors la nouvelle adresse au lieu d'interroger l'ancienne indéfiniment.
+   */
+  clientRef?: () => ComfyClient | null;
   registry: Registry;
   model: Pick<ModelDef, 'id' | 'label'> & Partial<ModelDef>;
   workflow: ApiPrompt;
@@ -98,6 +103,7 @@ export class Generation {
   private promptId: string | null = null;
   private outputPrefix = '';
   private ws: WebSocket | null = null;
+  private wsBase = '';
   private cancelled = false;
   private finished = false;
   private resolveFn!: (r: GenResult) => void;
@@ -144,6 +150,23 @@ export class Generation {
     return this.promptId;
   }
 
+  /** Instance Vast qui exécute cette génération. */
+  get instanceId(): number {
+    return this.input.instanceId;
+  }
+
+  /** Abandon côté interface (instance détruite) : rien ne pourra plus être récupéré. */
+  abandon(title: string, hint = ''): void {
+    if (this.finished) return;
+    journal.warn('génération', `${title}${hint ? ' — ' + hint : ''}`);
+    this.fail(new GenerationError({ title, hint }));
+  }
+
+  /** Client à utiliser maintenant (adresse courante du tunnel). */
+  private get client(): ComfyClient {
+    return this.input.clientRef?.() ?? this.input.client;
+  }
+
   /** Préfixe des fichiers de sortie (pour récupérer des images après un échec partiel). */
   get prefix(): string {
     return this.outputPrefix;
@@ -165,7 +188,8 @@ export class Generation {
   }
 
   private async run() {
-    const { client, registry, model, workflow, params } = this.input;
+    const { registry, model, workflow, params } = this.input;
+    const client = this.client;
     this.status('Connexion au serveur…');
     this.openSocket();
 
@@ -239,12 +263,13 @@ export class Generation {
     if (this.finished) return;
     let ws: WebSocket;
     try {
-      ws = this.input.client.openSocket(this.clientId);
+      ws = this.client.openSocket(this.clientId);
     } catch (e) {
       journal.warn('génération', 'WebSocket impossible, suivi par interrogation', e);
       return;
     }
     this.ws = ws;
+    this.wsBase = this.client.base;
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'feature_flags', data: { supports_preview_metadata: true } }));
       journal.debug('génération', 'WebSocket connecté');
@@ -384,12 +409,24 @@ export class Generation {
       force = true;
     }
     this.lastWatch = now;
+    if (this.wsBase && this.client.base !== this.wsBase) {
+      journal.info('génération', 'Nouvelle adresse de l’instance : suivi rattaché au nouveau tunnel');
+      const old = this.ws;
+      this.ws = null;
+      try {
+        old?.close();
+      } catch {
+        /* déjà fermé */
+      }
+      this.openSocket();
+      force = true;
+    }
     const wsDown = !this.ws || this.ws.readyState !== WebSocket.OPEN;
     const idleMs = now - this.lastActivity;
     if (!force && !this.polling && !this.offline && !this.doneSeen && !wsDown && idleMs < 60000) return;
     this.watching = true;
     try {
-      const h = await this.input.client.history(this.promptId);
+      const h = await this.client.history(this.promptId);
       if (this.offline) {
         this.offline = false;
         this.status('Connexion rétablie, génération en cours…');
@@ -399,7 +436,7 @@ export class Generation {
         await this.handleHistory(h);
         return;
       }
-      const q = await this.input.client.queue();
+      const q = await this.client.queue();
       const running = q.queue_running.some((e) => e[1] === this.promptId);
       const waiting = q.queue_pending.some((e) => e[1] === this.promptId);
       if (running || waiting || h) {
@@ -415,7 +452,7 @@ export class Generation {
         return;
       }
       // Ni dans la file ni dans l'historique : ComfyUI a peut-être redémarré. La vidéo existe-t-elle ?
-      const files = (await this.input.client.listOutputs(this.outputPrefix)).filter((f) =>
+      const files = (await this.client.listOutputs(this.outputPrefix)).filter((f) =>
         this.input.kind === 'image' ? /\.(png|jpe?g|webp)$/i.test(f.filename) : /\.(mp4|webm|mov|mkv|gif)$/i.test(f.filename),
       );
       if (files.length) {
@@ -459,7 +496,7 @@ export class Generation {
         enhancedPrompt: null,
         text,
       });
-      if (this.uploaded.length) void this.input.client.deleteFiles(this.uploaded).catch(() => undefined);
+      if (this.uploaded.length) void this.client.deleteFiles(this.uploaded).catch(() => undefined);
       return;
     }
     const files = this.input.kind === 'image' ? findImageOutputs(h.outputs) : findVideoOutputs(h.outputs);
@@ -480,11 +517,11 @@ export class Generation {
       if (this.input.multi) {
         for (const [i, f] of files.entries()) {
           this.status(`Téléchargement des images (${i + 1}/${files.length})…`);
-          const b = await this.input.client.view(f);
+          const b = await this.client.view(f);
           all.push({ filename: f.filename, blob: b.type ? b : new Blob([b], { type: 'image/png' }) });
         }
       }
-      const blob = this.input.multi ? all[all.length - 1].blob : await this.input.client.view(file);
+      const blob = this.input.multi ? all[all.length - 1].blob : await this.client.view(file);
       this.succeed({
         files: this.input.multi ? all : undefined,
         blob: blob.type ? blob : new Blob([blob], { type: this.input.kind === 'image' ? 'image/png' : 'video/mp4' }),
@@ -497,7 +534,7 @@ export class Generation {
         enhancedPrompt: this.enhancedPrompt,
       });
       // Suppression des sorties sur l'instance une fois récupérées.
-      void this.input.client.deleteFiles([...files, ...this.uploaded]).catch((e) => journal.warn('génération', 'Suppression des fichiers sur l’instance impossible', e));
+      void this.client.deleteFiles([...files, ...this.uploaded]).catch((e) => journal.warn('génération', 'Suppression des fichiers sur l’instance impossible', e));
     } catch (e) {
       if (!this.offline) {
         this.offline = true;
@@ -512,8 +549,8 @@ export class Generation {
   private async sendCancel() {
     if (!this.promptId) return;
     try {
-      await this.input.client.removeFromQueue([this.promptId]);
-      await this.input.client.interrupt(this.promptId);
+      await this.client.removeFromQueue([this.promptId]);
+      await this.client.interrupt(this.promptId);
     } catch (e) {
       journal.warn('génération', 'Annulation : requête échouée', e);
     }
@@ -527,8 +564,8 @@ export class Generation {
     if (!this.promptId) return;
     await this.sendCancel();
     // Encore en attente (pas sur le GPU) : retirée de la file, l'annulation est immédiate.
-    const q = await this.input.client.queue().catch(() => null);
-    if (q && !q.queue_running.some((e) => e[1] === this.promptId) && !(await this.input.client.history(this.promptId).catch(() => null))) {
+    const q = await this.client.queue().catch(() => null);
+    if (q && !q.queue_running.some((e) => e[1] === this.promptId) && !(await this.client.history(this.promptId).catch(() => null))) {
       this.fail(new GenerationError({ title: 'Génération annulée', hint: '' }, true));
       return;
     }
@@ -562,7 +599,7 @@ export class Generation {
     this.cleanup();
     if (this.promptId) removePending(this.promptId);
     if (!e.cancelled) journal.error('génération', `${e.readable.title}${e.readable.detail ? ' — ' + e.readable.detail : ''}`);
-    if (this.uploaded.length) void this.input.client.deleteFiles(this.uploaded).catch(() => undefined);
+    if (this.uploaded.length) void this.client.deleteFiles(this.uploaded).catch(() => undefined);
     this.rejectFn(e);
   }
 }

@@ -28,6 +28,14 @@ test('parcours complet sur mobile', async ({ page }) => {
   await expect(page.locator('[data-step="models"]')).toHaveClass(/step-(running|done)/);
   await expect(page.getByTestId('phase')).toHaveText('Prête', { timeout: 60_000 });
   await expect(page.locator('[data-step="ready"]')).toHaveClass(/step-done/);
+  await expect(page.getByTestId('boot-overall')).toBeHidden();
+  // Détail de chaque étape et durée.
+  await expect(page.getByTestId('step-detail-tools')).toHaveText('Caddy 2.11.9 · cloudflared 2026.10.7');
+  await expect(page.getByTestId('step-detail-comfy')).toHaveText('ComfyUI v0.44.2');
+  await expect(page.getByTestId('step-detail-models')).toContainText('Go');
+  for (const id of ['container', 'tools', 'tunnel', 'comfy', 'models']) {
+    await expect(page.locator(`[data-step="${id}"] .step-time`)).toHaveText(/^\d+ s$|^\d+:\d\d$/);
+  }
   await expect(page.getByTestId('cost-banner')).toContainText('Instance allumée');
 
   // --- Ce qui a été transmis à Vast : jamais la clé principale, amorce courte, env attendu

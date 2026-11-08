@@ -74,12 +74,17 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     outputCount: 0,
     loras: [],
     loraJobs: [],
+    /** Démarrage ralenti (tests des étapes détaillées) : facteur appliqué à la chronologie de l'agent. */
+    bootSlow: 1,
   };
   const sockets = new Map(); // clientId -> Set<ws>
 
   const api = {
     reset() {
-      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputs: [], outputCount: 0, loras: [], loraJobs: [] });
+      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputs: [], outputCount: 0, loras: [], loraJobs: [], bootSlow: 1 });
+    },
+    setBootSlow(f) {
+      st.bootSlow = f;
     },
     setInstalled(fams) {
       st.installed = fams;
@@ -99,6 +104,10 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       st.bootAt = Date.now();
       st.down = false;
     },
+    /** Nouveau tunnel (cloudflared redémarré) : l'ancienne adresse ne répond plus, WebSocket coupés. */
+    dropSockets() {
+      for (const set of sockets.values()) for (const ws of set) ws.terminate();
+    },
     state: st,
   };
   shared.comfy = api;
@@ -109,23 +118,30 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
 
   function agentStatus() {
     const t = Date.now() - st.bootAt;
-    const done = (s) => ({ state: 'done', msg: '', ts: Date.now() / 1000 });
-    const run = () => ({ state: 'running', msg: '' });
+    // Chronologie simulée (comme onstart.sh) : début/fin en secondes, sous-tâche et avancement.
+    const at = (ms) => (st.bootAt + ms) / 1000;
+    const done = (a, b, msg = '') => ({ state: 'done', msg, ts: Date.now() / 1000, started: at(a), ended: at(b), pct: 1 });
+    const run = (a, msg = '', pct) => ({ state: 'running', msg, ts: Date.now() / 1000, started: at(a), ...(pct === undefined ? {} : { pct }) });
     const pend = { state: 'pending' };
     const files = filesFor(st.installed);
     const already = files.every((f) => st.downloaded.has(f.name));
-    const dlStart = T(2000);
-    const dlDur = already ? 0 : T(2500);
+    const S = (ms) => T(ms * st.bootSlow);
+    const dlStart = S(2200);
+    const instEnd = S(1600);
+    const startEnd = S(2000);
+    const ip = Math.min(1, t / instEnd);
+    const installMsg = ip < 0.6 ? `dépendances : ${Math.round(ip * 70)} paquet(s) analysé(s) · numpy` : ip < 0.8 ? 'téléchargement : torchsde-0.2.6-py3-none-any.whl (61 kB)' : 'installation de 42 paquet(s)…';
+    const dlDur = already ? 0 : S(2500);
     const frac = Math.max(0, Math.min(1, (t - dlStart) / Math.max(1, dlDur)));
     const total = files.length * 1e9;
     if (frac >= 1) files.forEach((f) => st.downloaded.add(f.name));
     const steps = {
-      tools: done(),
-      tunnel: done(),
-      comfy_install: t > T(1200) ? done() : run(),
-      comfy_start: t > T(1800) ? done() : t > T(1200) ? run() : pend,
-      models: t < dlStart ? pend : frac < 1 ? run() : done(),
-      ready: frac >= 1 && t > dlStart ? done() : pend,
+      tools: done(0, T(300), 'Caddy 2.11.9 · cloudflared 2026.10.7'),
+      tunnel: done(T(300), T(1100), shared.comfyUrl),
+      comfy_install: t > instEnd ? done(T(300), instEnd, 'v0.44.2') : run(T(300), installMsg, 0.45 + 0.47 * ip),
+      comfy_start: t > startEnd ? done(instEnd, startEnd) : t > instEnd ? run(instEnd, `chargement… ${Math.round((t - instEnd) / 1000)} s · Starting server`, Math.min(0.95, (t - instEnd) / (startEnd - instEnd))) : pend,
+      models: t < dlStart ? pend : frac < 1 ? run(dlStart, `familles : ${st.installed.join(',')}`) : done(dlStart, dlStart + dlDur),
+      ready: frac >= 1 && t > dlStart ? done(dlStart + dlDur, dlStart + dlDur) : pend,
     };
     return {
       version: 1,
@@ -140,7 +156,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
         files: files.map((f, i) => ({ family: '', repo: f.repo, name: f.name, size: 1e9, done: Math.round(1e9 * Math.min(1, Math.max(0, frac * files.length - i))), state: frac >= 1 ? 'done' : 'downloading', error: null })),
       },
       tunnel_url: shared.comfyUrl,
-      comfy_ready: t > T(1800),
+      comfy_ready: t > startEnd,
       comfy_version: 'v0.44.2',
       watchdog: { idle_minutes: 20, max_hours: 4, boot_ts: st.bootAt / 1000, idle_since: Date.now() / 1000, stop_at: Date.now() / 1000 + 1200, triggered: false, reason: null },
       disk: { free_bytes: 80e9, total_bytes: 150e9 },
@@ -283,7 +299,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
-    if (st.down || !st.bootAt) return req.socket.destroy();
+    if (st.down || !st.bootAt || (shared.comfyActivePort && req.socket.localPort !== shared.comfyActivePort)) return req.socket.destroy();
     if (req.method === 'OPTIONS') {
       res.writeHead(req.headers.origin === origin ? 204 : 401, { ...cors, 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Max-Age': '600' });
       return res.end();
@@ -294,7 +310,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     const raw = Buffer.concat(chunks);
     const json = () => JSON.parse(raw.toString() || '{}');
     const p = url.pathname;
-    const comfyUp = Date.now() - st.bootAt > T(1800);
+    const comfyUp = Date.now() - st.bootAt > T(2000 * st.bootSlow);
 
     if (p === '/videogen/status') return send(res, 200, agentStatus());
     if (p === '/videogen/log') return send(res, 200, { lines: ['2026-11-08T10:00:00Z VIDEOGEN_BOOT=1', 'Python : /venv/main/bin/python (2.10.0 12.8)', 'HF_TOKEN=hf_…cdef (masqué)'] });
@@ -406,7 +422,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://x');
-    if (st.down || url.pathname !== '/ws' || !authed(req, url)) {
+    if (st.down || url.pathname !== '/ws' || !authed(req, url) || (shared.comfyActivePort && req.socket.localPort !== shared.comfyActivePort)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       return socket.destroy();
     }

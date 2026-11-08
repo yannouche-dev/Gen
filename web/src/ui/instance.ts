@@ -22,18 +22,32 @@ const PHASE_LABEL: Record<string, string> = {
   error: 'Erreur',
 };
 
+/** Durée lisible : 42 s, 3:07, 1 h 05. Avec `round`, arrondie (temps restant). */
+function fmtClock(ms: number, round = false): string {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (round && sec >= 90) return sec < 5400 ? `${Math.round(sec / 60)} min` : `${(sec / 3600).toFixed(1).replace('.', ',')} h`;
+  if (sec < 60) return `${sec} s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  return `${Math.floor(sec / 3600)} h ${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`;
+}
+
 export class InstanceScreen {
   el = h('div', { class: 'screen' });
   private status = h('section', { class: 'card', 'data-testid': 'instance-status' });
   private allBox = h('section', { class: 'card', 'data-testid': 'all-instances' });
   private steps = h('ol', { class: 'steps', 'data-testid': 'boot-steps' });
+  private overall = h('div', { class: 'boot-overall hidden', 'data-testid': 'boot-overall' });
   private actions = h('div', { class: 'actions' });
   private offersBox = h('section', { class: 'offers' });
   private settingsBox = h('details', { class: 'card' });
   private busy = false;
 
   constructor() {
-    this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.steps), this.actions, this.offersBox, new LoraCard().el, this.settingsBox);
+    // Durées des étapes en cours, mises à jour chaque seconde.
+    setInterval(() => {
+      for (const el of this.steps.querySelectorAll<HTMLElement>('.step-time[data-live]')) el.textContent = fmtClock(Date.now() - Number(el.dataset.start));
+    }, 1000);
+    this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.overall, this.steps), this.actions, this.offersBox, new LoraCard().el, this.settingsBox);
     app.manager.onChange(() => this.update());
     app.on((w) => {
       if (w === 'settings' || w === 'vault') this.update();
@@ -157,18 +171,43 @@ export class InstanceScreen {
   }
 
   private renderSteps(s: ManagerState) {
+    // Avancement global pondéré (les modèles pèsent le plus lourd), étape en cours et temps restant estimé.
+    const W: Record<string, number> = { rented: 2, container: 14, tools: 2, tunnel: 4, comfy: 18, models: 55, ready: 5 };
+    let total = 0;
+    let done = 0;
+    for (const st of s.steps) {
+      const w = W[st.id] ?? 1;
+      total += w;
+      if (st.state === 'done') done += w;
+      else if (st.state === 'running') done += w * (typeof st.progress === 'number' ? st.progress : 0.25);
+    }
+    const booting = ['renting', 'starting', 'booting'].includes(s.phase) && s.steps.some((st) => st.state !== 'pending');
+    this.overall.classList.toggle('hidden', !booting);
+    if (booting) {
+      const cur = s.steps.find((st) => st.state === 'running');
+      const left = s.modelsEta && cur?.id === 'models' ? ` · reste ≈ ${fmtClock(Math.max(0, s.modelsEta - Date.now()), true)}` : '';
+      replace(
+        this.overall,
+        h('div', { class: 'boot-overall-head' }, h('strong', { 'data-testid': 'boot-percent' }, `${Math.round((done / total) * 100)} %`), h('span', { class: 'hint' }, cur ? ` · ${cur.label}${left}` : '')),
+        h('progress', { max: 1, value: done / total }),
+      );
+    }
     replace(
       this.steps,
-      ...s.steps.map((st) =>
-        h(
+      ...s.steps.map((st) => {
+        const time = st.startedAt
+          ? h('span', { class: 'step-time', 'data-start': String(st.startedAt), 'data-live': st.state === 'running' ? '1' : undefined, title: 'Durée de l’étape' }, fmtClock((st.endedAt ?? Date.now()) - st.startedAt))
+          : h('span', { class: 'step-time' });
+        return h(
           'li',
           { class: `step step-${st.state}`, 'data-step': st.id },
           h('span', { class: 'step-icon', 'aria-hidden': 'true' }, st.state === 'done' ? '✓' : st.state === 'error' ? '✕' : st.state === 'running' ? '…' : '○'),
           h('span', { class: 'step-label' }, st.label),
-          st.detail ? h('small', { class: 'step-detail' }, st.detail) : null,
-          typeof st.progress === 'number' ? h('progress', { max: 1, value: st.progress }) : null,
-        ),
-      ),
+          time,
+          st.detail ? h('small', { class: 'step-detail', 'data-testid': `step-detail-${st.id}` }, st.detail) : null,
+          st.state === 'running' && typeof st.progress === 'number' ? h('progress', { max: 1, value: st.progress, 'data-testid': `step-progress-${st.id}` }) : null,
+        );
+      }),
     );
     const files = s.agent?.models?.files ?? [];
     if (files.length && s.phase !== 'ready') {
@@ -180,7 +219,11 @@ export class InstanceScreen {
             'details',
             null,
             h('summary', null, `Fichiers (${files.filter((f) => f.state === 'done').length}/${files.length})`),
-            h('ul', null, ...files.map((f) => h('li', { class: `file file-${f.state}` }, `${f.name} — ${f.size ? fmtBytes(f.done) + ' / ' + fmtBytes(f.size) : f.state}${f.error ? ' — ' + f.error : ''}`))),
+            h('ul', null, ...files.map((f) => h('li', { class: `file file-${f.state}` },
+              h('span', null, `${f.state === 'done' ? '✓ ' : f.state === 'error' ? '✕ ' : ''}${f.name}`),
+              h('small', { class: 'hint' }, ` ${f.size ? `${Math.round((f.done / f.size) * 100)} % · ${fmtBytes(f.done)} / ${fmtBytes(f.size)}` : f.state}${f.error ? ' — ' + f.error : ''}`),
+              f.state === 'downloading' && f.size ? h('progress', { max: 1, value: Math.min(1, f.done / f.size) }) : null,
+            ))),
           ),
         ),
       );

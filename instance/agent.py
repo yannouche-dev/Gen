@@ -4,6 +4,9 @@
 Sous-commandes :
   serve          serveur HTTP local (127.0.0.1:28189, derrière Caddy) + watchdog
   mark STEP STATE [MSG]   enregistre l'état d'une étape de démarrage
+  progress STEP PCT MSG   avancement d'une étape en cours (PCT entre 0 et 1, sous-tâche en cours)
+  track-pip STEP A B [REQ]  lit la sortie de pip sur l'entrée standard (recopiée sur la sortie) et
+                          publie l'avancement de STEP entre A et B : paquets analysés, téléchargés, installés
   fetch-models   télécharge les poids manquants via `hf download` et publie la progression
 
 Routes (préfixe /videogen, jeton vérifié par Caddy) :
@@ -121,11 +124,92 @@ def publish(line):
 
 # --------------------------------------------------------------------------- étapes
 
-def mark(step, state, msg=""):
+def mark(step, state, msg="", pct=None):
+    """État d'une étape : début (started), fin (ended), sous-tâche (msg) et avancement (pct, 0..1)."""
     path = os.path.join(RUN, "steps.json")
     steps = read_json(path, {})
-    steps[step] = {"state": state, "msg": msg, "ts": now()}
+    prev = steps.get(step, {})
+    t = now()
+    entry = {"state": state, "msg": mask(msg)[:200], "ts": t}
+    if state == "running":
+        entry["started"] = prev.get("started") if prev.get("state") == "running" and prev.get("started") else t
+        if pct is not None:
+            entry["pct"] = max(0.0, min(1.0, float(pct)))
+    else:
+        entry["started"] = prev.get("started", t)
+        entry["ended"] = t
+        if state == "done":
+            entry["pct"] = 1.0
+    steps[step] = entry
     write_json(path, steps)
+
+
+def count_requirements(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return sum(1 for l in f if l.strip() and not l.strip().startswith(("#", "-")))
+    except OSError:
+        return 0
+
+
+PIP_COLLECT = re.compile(r"^(?:Collecting|Requirement already satisfied:)\s+([A-Za-z0-9_.\-\[\]]+)")
+PIP_DOWNLOAD = re.compile(r"^\s*Downloading\s+(\S+?)(?:-\d[^\s]*)?\s*(?:\(([^)]*)\))?$")
+PIP_INSTALLING = re.compile(r"^Installing collected packages:\s*(.*)$")
+
+
+def track_pip(step, start, end, req=None, stream=None, out=None):
+    """Suit `pip install` : la sortie est recopiée telle quelle (journal pip.log) et l'avancement publié
+    au plus toutes les 1,5 s. Analyse ≈ 60 % de la plage, téléchargement et installation le reste."""
+    stream = stream or sys.stdin
+    out = out or sys.stdout
+    start, end = float(start), float(end)
+    span = max(0.0, end - start)
+    expected = max(count_requirements(req) if req else 0, 1)
+    seen = set()
+    state = {"msg": "analyse des dépendances…", "pct": start}
+    last = [0.0]
+
+    def publish_progress(force=False):
+        t = time.time()
+        if force or t - last[0] >= 1.5:
+            last[0] = t
+            mark(step, "running", state["msg"], state["pct"])
+
+    publish_progress(True)
+    for line in stream:
+        out.write(line)
+        out.flush()
+        text = line.rstrip()
+        m = PIP_COLLECT.match(text)
+        if m:
+            seen.add(m.group(1).split("[")[0].lower())
+            # Les dépendances indirectes dépassent souvent la liste : on vise 3 × la liste directe.
+            frac = min(1.0, len(seen) / (expected * 3.0))
+            state["pct"] = start + span * 0.6 * frac
+            state["msg"] = "dépendances : %d paquet(s) analysé(s) · %s" % (len(seen), m.group(1))
+            publish_progress()
+            continue
+        m = PIP_DOWNLOAD.match(text)
+        if m:
+            name = os.path.basename(m.group(1))
+            size = m.group(2)
+            state["msg"] = "téléchargement : %s%s" % (name[:60], " (%s)" % size if size else "")
+            publish_progress()
+            continue
+        m = PIP_INSTALLING.match(text)
+        if m:
+            n = len([x for x in m.group(1).split(",") if x.strip()])
+            state["pct"] = start + span * 0.8
+            state["msg"] = "installation de %d paquet(s)…" % n
+            publish_progress(True)
+            continue
+        if text.startswith("Successfully installed"):
+            state["pct"] = end
+            state["msg"] = "dépendances installées"
+            publish_progress(True)
+    state["pct"] = max(state["pct"], start + span * 0.95)
+    publish_progress(True)
+    return 0
 
 
 # --------------------------------------------------------------------------- modèles
@@ -761,6 +845,15 @@ def main(argv):
     if cmd == "mark" and len(argv) >= 4:
         mark(argv[2], argv[3], " ".join(argv[4:]))
         return 0
+    if cmd == "progress" and len(argv) >= 4:
+        try:
+            pct = float(argv[3])
+        except ValueError:
+            pct = None
+        mark(argv[2], "running", " ".join(argv[4:]), pct)
+        return 0
+    if cmd == "track-pip" and len(argv) >= 5:
+        return track_pip(argv[2], argv[3], argv[4], argv[5] if len(argv) > 5 else None)
     if cmd == "fetch-models":
         return fetch_models()
     if cmd == "publish":

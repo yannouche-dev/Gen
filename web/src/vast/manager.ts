@@ -26,6 +26,9 @@ export interface StepView {
   state: 'pending' | 'running' | 'done' | 'error';
   detail?: string;
   progress?: number;
+  /** Début et fin de l'étape (ms), pour afficher sa durée. */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface ManagerState {
@@ -42,6 +45,17 @@ export interface ManagerState {
   all: VastInstance[];
   allCheckedAt: number | null;
   allError: string | null;
+  /** Fin estimée du téléchargement des modèles (ms), d'après le débit mesuré. */
+  modelsEta: number | null;
+}
+
+function fmtRate(bps: number): string {
+  return bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace('.', ',')} Go/s` : `${Math.round(bps / 1e6)} Mo/s`;
+}
+function fmtLeft(sec: number): string {
+  if (sec < 90) return `${Math.max(1, Math.round(sec))} s`;
+  if (sec < 5400) return `${Math.round(sec / 60)} min`;
+  return `${(sec / 3600).toFixed(1).replace('.', ',')} h`;
 }
 
 /** Une instance coûte du GPU si elle tourne, démarre, ou doit tourner. */
@@ -52,6 +66,7 @@ export function isBilling(i: VastInstance): boolean {
 const STEP_DEFS: [string, string][] = [
   ['rented', 'Machine louée'],
   ['container', 'Conteneur démarré'],
+  ['tools', 'Outils de l’instance (Caddy, cloudflared)'],
   ['tunnel', 'Accès HTTPS sécurisé (tunnel)'],
   ['comfy', 'ComfyUI installé et lancé'],
   ['models', 'Modèles téléchargés'],
@@ -79,8 +94,11 @@ export class InstanceManager {
     all: [],
     allCheckedAt: null,
     allError: null,
+    modelsEta: null,
   };
   comfy: ComfyClient | null = null;
+  private modelSample: { t: number; done: number } | null = null;
+  private modelRate: number | null = null;
   private listeners = new Set<(s: ManagerState) => void>();
   private loopToken = 0;
   private lastLogFetch = 0;
@@ -104,8 +122,11 @@ export class InstanceManager {
     this.state = { ...this.state, ...p };
     this.emit();
   }
-  private setStep(id: string, state: StepView['state'], detail?: string, progress?: number) {
+  private setStep(id: string, state: StepView['state'], detail?: string, progress?: number, times: { started?: number; ended?: number } = {}) {
     const prev = this.state.steps.find((s) => s.id === id);
+    const now = Date.now();
+    const startedAt = times.started ?? prev?.startedAt ?? (state === 'running' || state === 'done' || state === 'error' ? now : undefined);
+    const endedAt = state === 'done' || state === 'error' ? times.ended ?? (prev?.state === state ? prev.endedAt : undefined) ?? now : undefined;
     if (prev && prev.state !== state) {
       const text = `${prev.label} : ${state === 'done' ? 'terminé' : state === 'running' ? 'en cours' : state === 'error' ? 'ERREUR' : state}${detail ? ' — ' + detail : ''}`;
       (state === 'error' ? journal.error : journal.info)('démarrage', text);
@@ -116,12 +137,14 @@ export class InstanceManager {
     }
     this.state = {
       ...this.state,
-      steps: this.state.steps.map((s) => (s.id === id ? { ...s, state, detail: detail ?? s.detail, progress } : s)),
+      steps: this.state.steps.map((s) => (s.id === id ? { ...s, state, detail: detail ?? s.detail, progress, startedAt, endedAt } : s)),
     };
     this.emit();
   }
   private resetSteps() {
-    this.state = { ...this.state, steps: STEP_DEFS.map(([id, label]) => ({ id, label, state: 'pending' })), tunnelUrl: null, agent: null, autoStop: null };
+    this.state = { ...this.state, steps: STEP_DEFS.map(([id, label]) => ({ id, label, state: 'pending' })), tunnelUrl: null, agent: null, autoStop: null, modelsEta: null };
+    this.modelSample = null;
+    this.modelRate = null;
     this.comfy = null;
   }
 
@@ -479,9 +502,12 @@ export class InstanceManager {
 
   private applyLogSteps(info: BootInfo) {
     const s = info.steps;
-    if (s.tools?.state === 'error') this.failStep('tunnel', `Outils : ${s.tools.msg}`);
-    if (s.tunnel?.state === 'running' || s.tunnel?.state === 'retry') this.setStep('tunnel', 'running', s.tunnel.msg || 'ouverture du tunnel…');
-    if (s.comfy_install?.state === 'running') this.setStep('comfy', 'running', 'installation…');
+    if (s.tools?.state === 'running') this.setStep('tools', 'running', s.tools.msg || 'téléchargement et vérification SHA-256…');
+    if (s.tools?.state === 'done') this.setStep('tools', 'done', s.tools.msg || '');
+    if (s.tools?.state === 'error') this.failStep('tools', `Outils : ${s.tools.msg}`);
+    if (s.tunnel?.state === 'running') this.setStep('tunnel', 'running', s.tunnel.msg || 'ouverture du tunnel Cloudflare…');
+    if (s.tunnel?.state === 'retry') this.setStep('tunnel', 'running', `nouvel essai en ${s.tunnel.msg === 'http2' ? 'HTTP/2' : 'QUIC'} (le premier protocole est bloqué par l’hôte)`);
+    if (s.comfy_install?.state === 'running') this.setStep('comfy', 'running', s.comfy_install.msg || 'installation…');
     if (s.comfy_install?.state === 'error') this.failStep('comfy', s.comfy_install.msg);
     if (s.comfy_start?.state === 'error') this.failStep('comfy', s.comfy_start.msg);
     if (s.models?.state === 'running') this.setStep('models', 'running', 'téléchargement…');
@@ -496,20 +522,49 @@ export class InstanceManager {
   private applyAgent(a: AgentStatus) {
     this.patch({ agent: a });
     const st = a.steps;
-    const comfyErr = st.comfy_install?.state === 'error' ? st.comfy_install : st.comfy_start?.state === 'error' ? st.comfy_start : null;
-    if (st.tools?.state === 'error') this.failStep('tunnel', st.tools.msg ?? 'outils');
+    // Heures de l'agent (secondes) → heure locale (ms), corrigées du décalage d'horloge entre l'instance et le téléphone.
+    const skew = Date.now() - a.now * 1000;
+    const ms = (t?: number) => (typeof t === 'number' ? t * 1000 + skew : undefined);
+    const times = (x?: { started?: number; ended?: number }) => ({ started: ms(x?.started), ended: ms(x?.ended) });
+
+    if (st.tools?.state === 'done') this.setStep('tools', 'done', st.tools.msg ?? '', undefined, times(st.tools));
+    else if (st.tools?.state === 'error') this.failStep('tools', st.tools.msg ?? 'outils');
+
+    const inst = st.comfy_install;
+    const start = st.comfy_start;
+    const comfyErr = inst?.state === 'error' ? inst : start?.state === 'error' ? start : null;
     if (comfyErr) this.failStep('comfy', comfyErr.msg ?? 'erreur ComfyUI');
-    else if (st.comfy_start?.state === 'done' && a.comfy_ready) this.setStep('comfy', 'done', a.comfy_version ?? '');
-    else if (st.comfy_install?.state === 'running') this.setStep('comfy', 'running', 'installation de ComfyUI…');
-    else if (st.comfy_start?.state === 'running' || st.comfy_install?.state === 'done') this.setStep('comfy', 'running', 'démarrage de ComfyUI…');
+    else if (start?.state === 'done' && a.comfy_ready) this.setStep('comfy', 'done', `ComfyUI ${a.comfy_version ?? ''}`.trim(), undefined, { started: ms(inst?.started), ended: ms(start.ended) });
+    else if (inst?.state === 'running') {
+      // Installation ≈ 85 % de l'étape, démarrage ≈ 15 %.
+      this.setStep('comfy', 'running', `Installation : ${inst.msg || 'en cours…'}`, (inst.pct ?? 0) * 0.85, { started: ms(inst.started) });
+    } else if (start?.state === 'running' || inst?.state === 'done') {
+      this.setStep('comfy', 'running', `Démarrage : ${start?.msg || 'lancement de ComfyUI…'}`, 0.85 + (start?.pct ?? 0) * 0.15, { started: ms(inst?.started ?? start?.started) });
+    }
 
     const m = a.models;
     if (m) {
       const pct = m.total_bytes ? Math.min(1, m.done_bytes / m.total_bytes) : 0;
       const gb = (n: number) => (n / 1e9).toFixed(1).replace('.', ',');
-      if (m.state === 'done') this.setStep('models', 'done', `${gb(m.total_bytes)} Go`);
-      else if (m.state === 'error') this.setStep('models', 'error', m.error ?? 'erreur de téléchargement');
-      else this.setStep('models', 'running', `${Math.round(pct * 100)} % · ${gb(m.done_bytes)} / ${gb(m.total_bytes)} Go`, pct);
+      const mt = times(st.models);
+      if (m.state === 'done') this.setStep('models', 'done', `${gb(m.total_bytes)} Go`, undefined, mt);
+      else if (m.state === 'error') this.setStep('models', 'error', m.error ?? 'erreur de téléchargement', undefined, mt);
+      else {
+        // Débit lissé et temps restant, d'après deux relevés successifs de l'agent.
+        const prev = this.modelSample;
+        if (prev && a.now > prev.t && m.done_bytes >= prev.done) {
+          const rate = (m.done_bytes - prev.done) / (a.now - prev.t);
+          this.modelRate = this.modelRate ? this.modelRate * 0.6 + rate * 0.4 : rate;
+        }
+        this.modelSample = { t: a.now, done: m.done_bytes };
+        const left = m.total_bytes - m.done_bytes;
+        const extra = this.modelRate && this.modelRate > 1e5
+          ? ` · ${fmtRate(this.modelRate)} · reste ≈ ${fmtLeft(left / this.modelRate)}`
+          : '';
+        const active = m.files.find((f) => f.state === 'downloading');
+        this.setStep('models', 'running', `${Math.round(pct * 100)} % · ${gb(m.done_bytes)} / ${gb(m.total_bytes)} Go${extra}${active ? ` · ${active.name}` : ''}`, pct, mt);
+        this.patch({ modelsEta: this.modelRate && this.modelRate > 1e5 ? Date.now() + (left / this.modelRate) * 1000 : null });
+      }
     }
     if (st.ready?.state === 'done' && a.comfy_ready) {
       if (this.state.phase !== 'ready') {

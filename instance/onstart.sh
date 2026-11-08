@@ -45,6 +45,8 @@ log() { echo "$(stamp) $*"; }
 PUBLISH_TO=${VG_PUBLISH_TO:-/proc/1/fd/1}
 pub() { log "$*"; { echo "$*" >>"$PUBLISH_TO"; } 2>/dev/null || true; }
 mark() { python3 "$SRC/agent.py" mark "$@" 2>/dev/null || true; pub "VIDEOGEN_STEP=$1:$2${3:+ $3}"; }
+# Avancement d'une étape en cours (lu par l'interface via /videogen/status ; pas publié dans les logs Vast).
+progress() { python3 "$SRC/agent.py" progress "$@" 2>/dev/null || true; }
 die() { mark "$1" error "$2"; log "ERREUR $1 : $2"; exit 1; }
 
 pub "VIDEOGEN_BOOT=$(cat "$RUN/boot_ts")"
@@ -65,7 +67,7 @@ supervise() { # supervise NOM COMMANDE... : relance la commande si elle s'arrêt
 }
 
 # ---------------------------------------------------------------- 1. outils (Caddy, cloudflared)
-mark tools running
+mark tools running "Caddy $CADDY_VERSION"
 install_caddy() {
   [ -x "$BIN/caddy" ] && [ "$(cat "$BIN/caddy.sha256" 2>/dev/null)" = "$CADDY_SHA256" ] && return 0
   local tmp=$BIN/caddy.tgz
@@ -84,8 +86,9 @@ install_cloudflared() {
   mv "$tmp" "$BIN/cloudflared" && chmod +x "$BIN/cloudflared" && echo "$CLOUDFLARED_SHA256" >"$BIN/cloudflared.sha256"
 }
 install_caddy || die tools "téléchargement ou empreinte de Caddy $CADDY_VERSION invalide"
+progress tools 0.5 "cloudflared $CLOUDFLARED_VERSION"
 install_cloudflared || die tools "téléchargement ou empreinte de cloudflared $CLOUDFLARED_VERSION invalide"
-mark tools "done"
+mark tools "done" "Caddy $CADDY_VERSION · cloudflared $CLOUDFLARED_VERSION"
 
 # ---------------------------------------------------------------- 2. agent + Caddy + tunnel
 export VG_LOG_DIR=$LOGS COMFY_URL=http://127.0.0.1:28188 AGENT_PORT=28189
@@ -133,17 +136,21 @@ tunnel_loop >>"$LOGS/tunnel.log" 2>&1 &
 echo $! >"$RUN/tunnel.pid"
 
 # ---------------------------------------------------------------- 3. ComfyUI (installation / mise à jour)
-mark comfy_install running
+mark comfy_install running "Python et PyTorch"
 if [ -x /venv/main/bin/python ]; then PY=/venv/main/bin/python
 elif python3 -c 'import torch' 2>/dev/null; then PY=$(command -v python3)
 else
+  progress comfy_install 0.02 "création de l’environnement Python"
   python3 -m venv "$VG_HOME/venv" || die comfy_install "création du venv impossible"
   PY=$VG_HOME/venv/bin/python
   "$PY" -m pip install -q --upgrade pip
-  "$PY" -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 ||
-    die comfy_install "installation de PyTorch impossible"
+  "$PY" -m pip install --progress-bar off torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 2>&1 |
+    python3 "$SRC/agent.py" track-pip comfy_install 0.05 0.40 >>"$LOGS/pip.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || die comfy_install "installation de PyTorch impossible (voir logs/pip.log)"
 fi
-log "Python : $PY ($("$PY" -c 'import torch;print(torch.__version__, torch.version.cuda)' 2>&1))"
+TORCH_INFO=$("$PY" -c 'import torch;print(torch.__version__, "CUDA", torch.version.cuda)' 2>&1 | tail -n1)
+log "Python : $PY ($TORCH_INFO)"
+progress comfy_install 0.42 "téléchargement de ComfyUI $COMFY_VERSION (PyTorch $TORCH_INFO)"
 
 if [ ! -d "$COMFY_DIR/.git" ]; then
   git clone -q --depth 1 --branch "$COMFY_VERSION" https://github.com/comfyanonymous/ComfyUI "$COMFY_DIR" ||
@@ -157,26 +164,37 @@ else
 fi
 REQ_SUM=$(cat "$COMFY_DIR/requirements.txt" | sha256sum | cut -c1-64)
 if [ "$(cat "$STATE/requirements.sha256" 2>/dev/null)" != "$REQ_SUM|$PY" ]; then
-  "$PY" -m pip install -q -r "$COMFY_DIR/requirements.txt" >>"$LOGS/pip.log" 2>&1 ||
-    die comfy_install "pip install -r requirements.txt a échoué (voir logs/pip.log)"
+  # Sortie de pip suivie ligne à ligne : paquets analysés, téléchargés, installés (affichés dans l'interface).
+  "$PY" -m pip install --progress-bar off -r "$COMFY_DIR/requirements.txt" 2>&1 |
+    python3 "$SRC/agent.py" track-pip comfy_install 0.45 0.92 "$COMFY_DIR/requirements.txt" >>"$LOGS/pip.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || die comfy_install "pip install -r requirements.txt a échoué (voir logs/pip.log)"
+  progress comfy_install 0.94 "outil de téléchargement Hugging Face (hf)"
   "$PY" -m pip install -q -U "huggingface_hub>=1.0" >>"$LOGS/pip.log" 2>&1 ||
     die comfy_install "installation de huggingface_hub (hf) impossible"
   echo "$REQ_SUM|$PY" >"$STATE/requirements.sha256"
+else
+  progress comfy_install 0.95 "dépendances déjà installées (redémarrage)"
 fi
 mark comfy_install "done" "$COMFY_VERSION"
 
-mark comfy_start running
+mark comfy_start running "lancement de ComfyUI"
 supervise comfyui "$PY" "$COMFY_DIR/main.py" --listen 127.0.0.1 --port 28188 \
   --enable-cors-header "$ALLOWED_ORIGIN" --disable-auto-launch
-for _ in $(seq 1 300); do
+t0=$(date +%s)
+for i in $(seq 1 300); do
   curl -fs -o /dev/null http://127.0.0.1:28188/system_stats && break
+  if [ $((i % 2)) -eq 0 ]; then
+    el=$(( $(date +%s) - t0 ))
+    last=$(grep -v '^[[:space:]]*$' "$LOGS/comfyui.log" 2>/dev/null | tail -n1 | cut -c1-90)
+    progress comfy_start "$(awk -v e="$el" 'BEGIN { p = e / 90; if (p > 0.95) p = 0.95; printf "%.2f", p }')" "chargement… ${el} s${last:+ · $last}"
+  fi
   sleep 2
 done
 curl -fs -o /dev/null http://127.0.0.1:28188/system_stats || die comfy_start "ComfyUI ne répond pas (voir logs/comfyui.log)"
 mark comfy_start "done"
 
 # ---------------------------------------------------------------- 4. poids des modèles
-mark models running "$MODELS"
+mark models running "familles : $MODELS"
 if [ -x "$(dirname "$PY")/hf" ]; then HF_BIN="$(dirname "$PY")/hf"; export HF_BIN; fi
 python3 "$SRC/agent.py" fetch-models
 rc=$?

@@ -33,8 +33,8 @@ export function createVastMock({ shared, origin, speed = 1 }) {
   function bootLines(inst) {
     // Lignes publiées par onstart.sh/agent.py (voir instance/), suivies au fil du temps.
     const t = Date.now() - inst.bootAt;
-    const lines = [`VIDEOGEN_BOOT=${Math.floor(inst.bootAt / 1000)}`, 'VIDEOGEN_STEP=tools:running'];
-    if (t > T(400)) lines.push('VIDEOGEN_STEP=tools:done', 'VIDEOGEN_STEP=tunnel:running');
+    const lines = [`VIDEOGEN_BOOT=${Math.floor(inst.bootAt / 1000)}`, 'VIDEOGEN_STEP=tools:running Caddy 2.11.9'];
+    if (t > T(400)) lines.push('VIDEOGEN_STEP=tools:done Caddy 2.11.9 · cloudflared 2026.10.7', 'VIDEOGEN_STEP=tunnel:running');
     if (t > T(1200)) lines.push(`VIDEOGEN_TUNNEL_URL=${shared.comfyUrl}`, 'VIDEOGEN_STEP=comfy_install:running');
     return lines;
   }
@@ -91,7 +91,20 @@ export function createVastMock({ shared, origin, speed = 1 }) {
       state.creates = [];
       state.requests = [];
       shared.comfy?.reset();
+      shared.comfyUrl = shared.comfyUrl1;
+      shared.comfyActivePort = null;
       return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__mock/slow-boot' && req.method === 'POST') {
+      shared.comfy?.setBootSlow(Number(body?.factor ?? 10));
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__mock/rotate-tunnel' && req.method === 'POST') {
+      shared.comfyUrl = shared.comfyUrl2;
+      shared.comfyActivePort = Number(new URL(shared.comfyUrl2).port);
+      shared.comfy?.dropSockets();
+      for (const inst of state.instances.values()) if (inst.label?.startsWith('videogen ')) inst.label = `videogen ${shared.comfyUrl}`;
+      return send(res, 200, { ok: true, url: shared.comfyUrl });
     }
     if (url.pathname === '/__mock/comfy-down' && req.method === 'POST') {
       shared.comfy?.setDown(true);

@@ -174,12 +174,18 @@ y sont masquées automatiquement.
 - [ ] **Démarrer** : une liste d'offres apparaît, RTX PRO 6000 en tête si disponibles.
 - [ ] Touche une offre. La fenêtre **Confirmer la location** affiche le prix, puis **Louer à …**.
 - [ ] Le bandeau orange « Instance allumée · durée · coût » apparaît en haut.
-- [ ] Les étapes avancent. Durées indicatives pour un **premier** démarrage, environ 20 à 40 min en tout :
+- [ ] Les étapes avancent, avec en haut un **avancement global en %**, et pour chaque étape sa **durée** (en direct
+  pour l'étape en cours), sa **sous-tâche** et sa barre. Durées indicatives pour un **premier** démarrage, environ
+  20 à 40 min en tout :
   - ✓ Machine louée ;
-  - ✓ Conteneur démarré (téléchargement de l'image, souvent 3 à 10 min) ;
+  - ✓ Conteneur démarré (téléchargement de l'image, souvent 3 à 10 min ; le message de Vast s'affiche) ;
+  - ✓ Outils de l'instance (Caddy et cloudflared, vérifiés par SHA-256) ;
   - ✓ Accès HTTPS sécurisé (tunnel) ;
-  - ✓ ComfyUI installé et lancé (3 à 8 min) ;
-  - Modèles téléchargés : **%** en direct, environ 118 Go avec les familles par défaut (52 Go pour LTX-2.5 seul) ;
+  - ✓ ComfyUI installé et lancé (3 à 8 min) : PyTorch détecté, téléchargement de ComfyUI, puis **dépendances Python
+    suivies paquet par paquet** (« dépendances : 34 paquet(s) analysé(s) », « téléchargement : … », « installation
+    de 42 paquet(s) »), puis démarrage avec la dernière ligne du journal de ComfyUI ;
+  - Modèles téléchargés : **%**, Go reçus, **débit** et **temps restant** en direct, fichier en cours (liste détaillée
+    dépliable), environ 118 Go avec les familles par défaut (52 Go pour LTX-2.5 seul) ;
   - ✓ Prêt.
 
 **C. Première génération**
@@ -534,6 +540,8 @@ Les tests de bout en bout couvrent :
 - instance : arrêt, redémarrage, destruction, reprise d'une instance arrêtée ;
 - rappel avant de fermer l'onglet ;
 - file d'attente vidéo : variantes envoyées d'un coup, ajout pendant le calcul, retrait d'une vidéo de la file ;
+- nouveau tunnel (nouvelle adresse) pendant une génération : vidéo récupérée, bouton *Générer* réactivé ;
+- étapes de démarrage détaillées : dépendances pip, démarrage de ComfyUI, débit et temps restant, durées, avancement global qui ne recule pas ;
 - Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
 - BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet ;
 - LoRA : installation depuis un dépôt (choix du fichier) ou un lien direct, refus d'un dépôt protégé et d'un autre site, LoRA LTX dans Générer et LoRA de style FLUX.2 dans le Studio BD (nœuds vérifiés), suppression, réinstallation sur une nouvelle instance.

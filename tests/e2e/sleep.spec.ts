@@ -66,3 +66,22 @@ test('historique ComfyUI perdu pendant la veille : vidéo retrouvée par son nom
   await expect(page.getByTestId('gallery-grid').locator('.tile')).toHaveCount(1, { timeout: 60_000 });
   expect(await pending(page)).toBe(0);
 });
+
+test('nouveau tunnel (nouvelle adresse) pendant la génération : vidéo récupérée, bouton Générer réactivé', async ({ page }) => {
+  await enterKeys(page);
+  await rentAndWaitReady(page);
+  await generate(page, 'a slow train in the mountains #slow');
+  await waitProgress(page);
+  await expect(page.getByTestId('generate')).toHaveText('Ajouter à la file (1 en cours)');
+  // cloudflared redémarre : l'ancienne adresse ne répond plus, la nouvelle est publiée dans les logs et le label.
+  await fetch(`${MOCK}/__mock/rotate-tunnel`, { method: 'POST' });
+  await expect(page.getByTestId('result-video')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('gen-error')).toHaveCount(0);
+  await expect(page.getByTestId('generate')).toHaveText('Générer');
+  await expect(page.getByTestId('generate')).toBeEnabled({ timeout: 30_000 });
+  expect(await pending(page)).toBe(0);
+  // Et on peut relancer tout de suite.
+  await page.getByTestId('prompt').fill('a quick boat');
+  await page.getByTestId('generate').click();
+  await expect.poll(async () => (await mockState()).comfy!.prompts, { timeout: 15_000 }).toBe(2);
+});

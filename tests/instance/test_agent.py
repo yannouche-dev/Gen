@@ -313,5 +313,39 @@ class AgentTest(unittest.TestCase):
         self.assertEqual((code, res["error"]), (400, "too_big"))
 
 
+    def test_step_progress_and_pip_tracking(self):
+        req = os.path.join(self.home, "requirements.txt")
+        with open(req, "w") as f:
+            f.write("torch\nnumpy>=1.25\n# commentaire\nPillow\n")
+        pip_out = ("Collecting numpy>=1.25\n"
+                   "  Downloading numpy-2.1.0-cp312-cp312-manylinux_2_17_x86_64.whl (16.0 MB)\n"
+                   "Requirement already satisfied: torch in /venv/main/lib/python3.12/site-packages\n"
+                   "Collecting Pillow\n"
+                   "Installing collected packages: numpy, Pillow\n"
+                   "Successfully installed Pillow-11.0.0 numpy-2.1.0\n")
+        r = subprocess.run([sys.executable, AGENT, "track-pip", "comfy_install", "0.45", "0.92", req],
+                           input=pip_out, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, pip_out)  # sortie de pip recopiée telle quelle (logs/pip.log)
+        steps = json.load(open(os.path.join(self.home, "run", "steps.json")))
+        st = steps["comfy_install"]
+        self.assertEqual(st["state"], "running")
+        self.assertAlmostEqual(st["pct"], 0.92)
+        self.assertEqual(st["msg"], "dépendances installées")
+        started = st["started"]
+        # Avancement d'une autre étape : secrets masqués ; fin d'étape : durée connue.
+        self.run_agent("progress", "comfy_start", "0.3", "chargement… 12 s · token hf_secret_token_123456")
+        self.run_agent("mark", "comfy_install", "done", "v0.44.2")
+        steps = json.load(open(os.path.join(self.home, "run", "steps.json")))
+        self.assertNotIn("hf_secret_token_123456", steps["comfy_start"]["msg"])
+        self.assertAlmostEqual(steps["comfy_start"]["pct"], 0.3)
+        self.assertEqual(steps["comfy_install"]["started"], started)
+        self.assertGreaterEqual(steps["comfy_install"]["ended"], started)
+        self.assertEqual(steps["comfy_install"]["pct"], 1.0)
+        st = self.serve(18738)
+        self.assertEqual(st["steps"]["comfy_start"]["state"], "running")
+        self.assertIn("started", st["steps"]["comfy_start"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -67,6 +67,11 @@ export class ComicScreen {
     });
     app.manager.onChange((s) => {
       if (s.phase === 'ready' && app.manager.comfy && listPending().some((j) => j.meta?.comic)) void this.resumePending();
+      for (const b of this.bg) {
+        if ((s.phase === 'idle' && !s.instance) || (s.instance && s.instance.id !== b.gen.instanceId)) {
+          b.gen.abandon('Instance détruite : travail perdu', 'Relance la génération des cases vides sur une nouvelle instance.');
+        }
+      }
     });
   }
 
@@ -157,6 +162,7 @@ export class ComicScreen {
     try {
       const gen = new Generation({
         client: c,
+        clientRef: () => app.manager.comfy,
         registry: app.registry!,
         model: { id: 'flux2-bd', label },
         workflow: flux,
@@ -186,6 +192,7 @@ export class ComicScreen {
     try {
       const gen = new Generation({
         client: c,
+        clientRef: () => app.manager.comfy,
         registry: app.registry!,
         model: { id: 'qwen35-bd', label },
         workflow: qwen,
@@ -946,6 +953,7 @@ export class ComicScreen {
       const onQueued = new Promise<void>((r) => (queued = r));
       entry.gen = new Generation({
         client: c,
+        clientRef: () => app.manager.comfy,
         registry: app.registry!,
         model: { id: 'flux2-bd', label: `FLUX.2 · ${job.label}` },
         workflow: flux,
@@ -1099,6 +1107,7 @@ export class ComicScreen {
     journal.info('bd', `Reprise de la case en cours (projet « ${p.title} »)`);
     const gen = new Generation({
       client: app.manager.comfy!,
+      clientRef: () => app.manager.comfy,
       registry: app.registry!,
       model: { id: job.modelId, label: 'FLUX.2 · reprise' },
       workflow: this.wf.flux!,
@@ -1131,6 +1140,7 @@ export class ComicScreen {
     const entry = { job: pseudo, gen: null as unknown as Generation, status: 'Reprise du suivi…', projectId: p.id };
     entry.gen = new Generation({
       client: app.manager.comfy!,
+      clientRef: () => app.manager.comfy,
       registry: app.registry!,
       model: { id: job.modelId, label: `FLUX.2 · ${m.label}` },
       workflow: this.wf.flux!,

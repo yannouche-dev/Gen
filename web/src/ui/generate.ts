@@ -97,6 +97,13 @@ export class GenerateScreen {
     });
     app.manager.onChange((ms) => {
       this.renderNotice();
+      this.updateSubmit();
+      // Instance détruite (ou remplacée) : ses générations ne pourront plus aboutir.
+      for (const q of this.active()) {
+        if ((ms.phase === 'idle' && !ms.instance) || (ms.instance && ms.instance.id !== q.gen.instanceId)) {
+          q.gen.abandon('Instance détruite : génération perdue', 'L’instance qui calculait cette vidéo n’existe plus.');
+        }
+      }
       if (ms.phase === 'ready' && app.manager.comfy && listPending().some((j) => !j.meta?.comic)) void this.resumePending();
     });
     this.renderNotice();
@@ -506,6 +513,7 @@ export class GenerateScreen {
         (events) =>
           new Generation({
             client: c,
+            clientRef: () => app.manager.comfy,
             registry: app.registry!,
             model: m,
             workflow: app.workflows.get(m.id)!,
@@ -546,6 +554,7 @@ export class GenerateScreen {
         n++;
         this.enqueue((events) => new Generation({
           client: c,
+          clientRef: () => app.manager.comfy,
           registry: app.registry!,
           model: m,
           workflow: app.workflows.get(m.id)!,
@@ -784,11 +793,18 @@ export class GenerateScreen {
     this.progressBox.classList.remove('hidden');
   }
 
+  /**
+   * Texte et état du bouton, recalculés à chaque changement (file, état de l'instance) : le bouton ne doit
+   * jamais rester grisé parce que le formulaire a été dessiné pendant une reconnexion à l'instance.
+   */
   private updateSubmit() {
     const b = this.submitBtn;
     if (!b) return;
     const n = this.active().length;
     b.textContent = n ? `Ajouter à la file (${n} en cours)` : 'Générer';
+    const m = this.currentModel();
+    const av = m ? app.availability.get(m.id) : undefined;
+    b.disabled = !(app.manager.state.phase === 'ready' && !!app.manager.comfy) || (!!av && !av.ok);
   }
 
   showResult(item: GalleryItem): void {
