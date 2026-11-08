@@ -60,6 +60,12 @@ export function createVastMock({ shared, origin, speed = 1 }) {
       if (!ok) return send(res, 401, { error: 'Invalid credentials in Authorization header' }, cors);
       if (url.pathname === '/hf/api/whoami-v2') return send(res, 200, { type: 'user', name: 'testuser', auth: { accessToken: { displayName: 'videogen', role: 'fineGrained' } } }, cors);
       if (url.pathname === '/hf/api/models/Lightricks/LTX-2.5/auth-check') return send(res, 200, {}, cors);
+      // Liste des fichiers d'un dépôt (choix du fichier d'une LoRA).
+      const repoFiles = url.pathname.match(/^\/hf\/api\/models\/([^/]+\/[^/]+)\/revision\/([^/]+)$/);
+      if (repoFiles) {
+        if (/gated/.test(repoFiles[1])) return send(res, 403, { error: 'gated' }, cors);
+        return send(res, 200, { id: repoFiles[1], siblings: [{ rfilename: 'README.md' }, { rfilename: 'ltx25-ink-style.safetensors' }, { rfilename: 'v2/ltx25-ink-style-v2.safetensors' }] }, cors);
+      }
       return send(res, 404, { error: 'not found' }, cors);
     }
 

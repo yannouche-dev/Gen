@@ -131,8 +131,13 @@ app.manager.onChange(() => {
   // Écran maintenu allumé pendant le démarrage (le travail continue de toute façon sur l'instance).
   if (['renting', 'starting', 'booting'].includes(app.manager.state.phase)) holdAwake('démarrage');
   else releaseAwake('démarrage');
-  if (app.manager.state.phase === 'ready') void app.refreshAvailability().catch((e) => journal.warn('modèles', 'Lecture de /object_info impossible', e));
-  else if (!app.manager.comfy) app.invalidateAvailability();
+  if (app.manager.state.phase === 'ready') {
+    void app.refreshAvailability().catch((e) => journal.warn('modèles', 'Lecture de /object_info impossible', e));
+    if (!app.loras.loaded) void app.refreshLoras();
+  } else if (!app.manager.comfy) {
+    app.invalidateAvailability();
+    if (app.loras.loaded) void app.refreshLoras();
+  }
 });
 setInterval(() => {
   if (vault.isUnlocked() && app.vastReady()) void app.manager.refreshCredit();

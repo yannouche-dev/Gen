@@ -229,5 +229,89 @@ class AgentTest(unittest.TestCase):
         self.assertIn("durée maximale", st["watchdog"]["reason"] or "")
 
 
+    def post(self, url, data):
+        req = urllib.request.Request(url, data=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.load(e)
+
+    def wait_lora_jobs(self, base):
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            st = get(base + "/videogen/loras")
+            if not [j for j in st["jobs"] if j["state"] == "downloading"]:
+                return st
+            time.sleep(0.2)
+        self.fail("téléchargement de LoRA sans fin")
+
+    def test_lora_install_list_delete_and_refusals(self):
+        # Faux `hf` qui écrit un vrai en-tête safetensors (8 octets de taille + JSON), sinon des zéros.
+        good = os.path.join(self.home, "hf_lora")
+        with open(good, "w") as f:
+            f.write("#!/bin/sh\n# hf download REPO PATH --local-dir DIR --revision REV\n"
+                    "case \"$3\" in *bad*) exec %s \"$@\";; esac\n"
+                    "mkdir -p \"$5/$(dirname \"$3\")\" && printf '\\002\\000\\000\\000\\000\\000\\000\\000{}' > \"$5/$3\" "
+                    "&& head -c 2038 /dev/zero >> \"$5/$3\"\n" % self.hf)
+        os.chmod(good, 0o755)
+        base = "http://127.0.0.1:18736"
+        self.serve(18736, HF_BIN=good)
+        self.assertEqual(get(base + "/videogen/loras")["loras"], [])
+
+        code, job = self.post(base + "/videogen/loras", {"repo": "org/comic-style", "path": "loras/Ink Style.safetensors", "revision": "main", "base": "flux2dev"})
+        self.assertEqual(code, 202, job)
+        self.assertEqual(job["name"], "videogen/comic-style__Ink_Style.safetensors")
+        st = self.wait_lora_jobs(base)
+        self.assertEqual([l["name"] for l in st["loras"]], ["videogen/comic-style__Ink_Style.safetensors"])
+        self.assertEqual(st["loras"][0]["base"], "flux2dev")
+        self.assertEqual(st["loras"][0]["repo"], "org/comic-style")
+        path = os.path.join(self.home, "ComfyUI", "models", "loras", "videogen", "comic-style__Ink_Style.safetensors")
+        self.assertEqual(os.path.getsize(path), 2048)
+        heads = [c for c in self.fake.calls if c[0] == "HEAD" and "comic-style" in c[1]]
+        self.assertEqual(heads[0][2], "Bearer hf_secret_token_123456")  # le token HF ne sort que vers HF_BASE
+        self.assertIn("/org/comic-style/resolve/main/loras/Ink%20Style.safetensors", heads[0][1])
+        # Déjà installée : rien à télécharger.
+        code, again = self.post(base + "/videogen/loras", {"repo": "org/comic-style", "path": "loras/Ink Style.safetensors", "base": "flux2dev"})
+        self.assertEqual((code, again.get("already")), (200, True))
+
+        # Refus : dépôt, format, base, révision, dépôt protégé, fichier qui n'est pas un safetensors.
+        for body, err in [
+            ({"repo": "../etc", "path": "a.safetensors", "base": "ltx25"}, "bad_repo"),
+            ({"repo": "https://evil.example/x", "path": "a.safetensors", "base": "ltx25"}, "bad_repo"),
+            ({"repo": "org/x", "path": "model.ckpt", "base": "ltx25"}, "bad_path"),
+            ({"repo": "org/x", "path": "../../a.safetensors", "base": "ltx25"}, "bad_path"),
+            ({"repo": "org/x", "path": "a.safetensors", "base": "sdxl"}, "bad_base"),
+            ({"repo": "org/x", "path": "a.safetensors", "revision": "main;rm", "base": "ltx25"}, "bad_revision"),
+            ({"repo": "org/gated", "path": "a.safetensors", "base": "ltx25"}, "hf"),
+        ]:
+            code, res = self.post(base + "/videogen/loras", body)
+            self.assertEqual((code, res.get("error")), (400, err), body)
+        code, job = self.post(base + "/videogen/loras", {"repo": "org/x", "path": "bad.safetensors", "base": "ltx25"})
+        self.assertEqual(code, 202)
+        st = self.wait_lora_jobs(base)
+        self.assertEqual(len(st["loras"]), 1)
+        err = [j for j in get(base + "/videogen/loras")["jobs"] if j["file"] == "x__bad.safetensors"]
+        self.assertEqual(err[0]["state"], "error")
+        self.assertIn("safetensors", err[0]["error"])
+        self.assertFalse(os.path.exists(os.path.join(self.home, "ComfyUI", "models", "loras", "videogen", "x__bad.safetensors")))
+
+        # Suppression : chemin hors du dossier refusé, LoRA supprimée.
+        for name in ["../../src/weights.json", "videogen/../../../src/weights.json", "manifest.json"]:
+            code, _ = self.post(base + "/videogen/loras/delete", {"name": name})
+            self.assertEqual(code, 400, name)
+        self.assertTrue(os.path.exists(os.path.join(self.home, "src", "weights.json")))
+        code, res = self.post(base + "/videogen/loras/delete", {"name": "videogen/comic-style__Ink_Style.safetensors"})
+        self.assertEqual(code, 200)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(get(base + "/videogen/loras")["loras"], [])
+
+    def test_lora_size_limit(self):
+        base = "http://127.0.0.1:18737"
+        self.serve(18737, LORA_MAX_MB="0")
+        code, res = self.post(base + "/videogen/loras", {"repo": "org/big", "path": "big.safetensors", "base": "ltx25"})
+        self.assertEqual((code, res["error"]), (400, "too_big"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,7 +97,7 @@ describe('offres Vast', () => {
     expect(q.type).toBe('on-demand');
     expect(q.reliability).toEqual({ gte: 0.99 });
     expect(q.inet_down).toEqual({ gte: 500 });
-    expect(q.disk_space).toEqual({ gte: 150 });
+    expect(q.disk_space).toEqual({ gte: 200 }); // LTX-2.5 + Studio BD par défaut
     expect(q.gpu_name.in).toContain('RTX PRO 6000 WS');
     expect(q.gpu_name.in).toContain('RTX 5090');
     expect(q.num_gpus).toEqual({ eq: 1 });

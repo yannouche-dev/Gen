@@ -1,6 +1,7 @@
 // Client ComfyUI (via le tunnel HTTPS et Caddy). Routes vérifiées dans server.py de ComfyUI v0.44 :
 // /prompt, /ws, /history/{id}, /view, /upload/image, /object_info, /interrupt, /queue, /system_stats.
 // Plus les routes de l'agent videogen : /videogen/status, /videogen/log, /videogen/files/delete.
+import type { LoraInfo, LoraJob, SavedLora } from '../workflows/lora.ts';
 import { request, requestJson, HttpError } from '../core/http.ts';
 import { journal } from '../core/journal.ts';
 
@@ -70,6 +71,17 @@ export class ComfyClient {
       silentStatuses: [404],
     });
     return res.files ?? [];
+  }
+  /** LoRA installées sur l'instance et téléchargements en cours (agent videogen). */
+  listLoras(): Promise<{ loras: LoraInfo[]; jobs: LoraJob[] }> {
+    return requestJson(`${this.base}/videogen/loras`, { cat: 'instance', headers: this.h(), quiet: true, soft: true, silentStatuses: [404] });
+  }
+  /** Demande à l'instance de télécharger une LoRA depuis Hugging Face (réponse immédiate, téléchargement en fond). */
+  installLora(l: SavedLora): Promise<LoraJob & { already?: boolean }> {
+    return requestJson(`${this.base}/videogen/loras`, { cat: 'instance', headers: this.h(), json: l });
+  }
+  deleteLora(name: string): Promise<{ deleted: string }> {
+    return requestJson(`${this.base}/videogen/loras/delete`, { cat: 'instance', headers: this.h(), json: { name } });
   }
   deleteFiles(files: FileRef[]): Promise<{ deleted: string[]; missing: string[]; refused: string[] }> {
     return requestJson(`${this.base}/videogen/files/delete`, { cat: 'comfy', headers: this.h(), json: { files } });

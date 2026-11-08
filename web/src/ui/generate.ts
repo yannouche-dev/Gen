@@ -12,6 +12,8 @@ import { explainError } from '../comfy/errors.ts';
 import { thumbnail, videoMeta, lastFrame } from '../media/frames.ts';
 import type { GalleryItem } from '../media/gallery.ts';
 import { confirmDialog } from './dialog.ts';
+import { loraPicker } from './lora.ts';
+import type { LoraChoice } from '../workflows/lora.ts';
 
 interface FormState {
   modelId: string;
@@ -36,6 +38,8 @@ interface FormState {
   extras: Record<string, number | boolean>;
   /** Nombre de variantes à générer à la suite (seeds différentes). */
   variants: number;
+  /** LoRA choisies (modèles qui en acceptent). */
+  loras: LoraChoice[];
   parentId?: string;
 }
 
@@ -88,7 +92,7 @@ export class GenerateScreen {
   constructor() {
     this.el.append(this.notice, this.form, this.progressBox, this.resultBox);
     app.on((w) => {
-      if (w === 'registry' || w === 'availability') this.renderForm();
+      if (w === 'registry' || w === 'availability' || (w === 'loras' && this.currentModel()?.lora)) this.renderForm();
       if (w === 'route' && app.route === 'generate') this.onShow();
     });
     app.manager.onChange((ms) => {
@@ -147,6 +151,8 @@ export class GenerateScreen {
       // Valeurs par défaut du modèle, en gardant celles déjà choisies pour une option de même nom (ex. son).
       extras: Object.fromEntries((m.extras ?? []).map((x) => [x.key, this.st?.extras?.[x.key] ?? x.default])),
       variants: this.st?.variants ?? 1,
+      // LoRA gardées si le nouveau modèle a la même base (ex. LTX t2v → i2v).
+      loras: m.lora && this.st && app.model(this.st.modelId)?.lora?.base === m.lora.base ? this.st.loras.map((l) => ({ ...l })) : [],
     };
   }
 
@@ -316,6 +322,7 @@ export class GenerateScreen {
       const p = presets.find((x) => x.name === presetPick.value);
       if (p) {
         this.st = { ...st, ...(p.values as Partial<FormState>), modelId: m.id, startImage: st.startImage, endImage: st.endImage };
+        this.st.loras = m.lora ? ((p.values.loras as LoraChoice[] | undefined) ?? []).map((l) => ({ ...l })) : [];
         this.renderForm();
       }
     });
@@ -323,7 +330,7 @@ export class GenerateScreen {
     savePreset.addEventListener('click', () => {
       const name = window.prompt('Nom du préréglage', `${m.label.split('·')[0].trim()} ${st.preset} ${st.ratio}`)?.trim();
       if (!name) return;
-      const values: Record<string, unknown> = { prompt: st.prompt, negative: st.negative, preset: st.preset, ratio: st.ratio, duration: st.duration, fps: st.fps, steps: st.steps, cfg: st.cfg, enhancePrompt: st.enhancePrompt, fast: st.fast, seed: st.seed, randomSeed: st.randomSeed, extras: { ...st.extras }, middleAt: st.middleAt, variants: st.variants };
+      const values: Record<string, unknown> = { prompt: st.prompt, negative: st.negative, preset: st.preset, ratio: st.ratio, duration: st.duration, fps: st.fps, steps: st.steps, cfg: st.cfg, enhancePrompt: st.enhancePrompt, fast: st.fast, seed: st.seed, randomSeed: st.randomSeed, extras: { ...st.extras }, middleAt: st.middleAt, variants: st.variants, loras: st.loras.map((l) => ({ ...l })) };
       const all = loadPresets().filter((p) => !(p.modelId === m.id && p.name === name));
       all.push({ name, modelId: m.id, values } as GenPreset);
       savePresets(all);
@@ -401,9 +408,10 @@ export class GenerateScreen {
           return h('div', { class: 'field' }, h('label', { class: 'check' }, c, ` ${opts.enhancePrompt!.label}`), h('small', { class: 'hint' }, 'Gemma réécrit et enrichit ton prompt avant la génération ; le prompt utilisé s’affiche avec le résultat.'));
         })()
       : null;
+    const loraBox = m.lora ? loraPicker(m.lora.base, st.loras, () => undefined, () => this.renderForm()) : null;
     const modelOptions =
-      extraFields.length || enhanceBox
-        ? h('section', { class: 'model-options', 'data-testid': 'model-options' }, h('h3', null, `Options ${reg.families[m.family]?.label ?? ''}`), enhanceBox, ...extraFields)
+      extraFields.length || enhanceBox || loraBox
+        ? h('section', { class: 'model-options', 'data-testid': 'model-options' }, h('h3', null, `Options ${reg.families[m.family]?.label ?? ''}`), enhanceBox, ...extraFields, loraBox)
         : null;
 
     // Image clé intermédiaire (LTX : images clés à n'importe quel instant)
@@ -466,6 +474,10 @@ export class GenerateScreen {
     const parentId = st.parentId;
     st.parentId = undefined;
     const baseSeed = st.seed;
+    // LoRA supprimées de l'instance depuis leur choix : ignorées (sinon ComfyUI refuserait la requête).
+    const installed = new Set(app.loras.list.map((l) => l.name));
+    const loras = m.lora ? st.loras.filter((l) => installed.has(l.name)) : [];
+    if (m.lora && loras.length < st.loras.length) toast('LoRA absente(s) de l’instance ignorée(s)', 'info');
     const short = st.prompt.trim().slice(0, 40) + (st.prompt.trim().length > 40 ? '…' : '');
     // Toutes les vidéos partent tout de suite dans la file de ComfyUI : le GPU les enchaîne sans temps mort,
     // même si le téléphone se met en veille.
@@ -487,6 +499,7 @@ export class GenerateScreen {
         fast: st.fast,
         extras: { ...st.extras },
         middleAt: st.middleImage ? st.middleAt : undefined,
+        loras: loras.length ? loras.map((l) => ({ ...l })) : undefined,
       };
       const pid = i === 0 ? parentId : undefined;
       this.enqueue(

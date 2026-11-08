@@ -129,6 +129,9 @@ test('Studio BD : personnage, découpage IA, cases avec références, export, pe
 
 test('Studio BD sans FLUX.2 sur l’instance : message clair', async ({ page }) => {
   await enterKeys(page);
+  await page.locator('details', { hasText: 'Réglages de location' }).locator('summary').click();
+  await page.getByTestId('family-flux2dev').uncheck();
+  await page.getByTestId('family-qwen35').uncheck();
   await rentAndWaitReady(page);
   await page.getByTestId('tab-comic').click();
   await expect(page.getByTestId('comic-missing')).toContainText('FLUX.2 Dev, Qwen 3.5');

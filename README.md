@@ -85,7 +85,7 @@ web/                     Interface (Vite + TypeScript, sans framework)
 worker/                  Cloudflare Worker (proxy Vast sans état) + wrangler.jsonc
 instance/
   onstart.sh             installation et lancement sur la machine GPU
-  agent.py               statut, progression, suppression des sorties, watchdog
+  agent.py               statut, progression, suppression des sorties, LoRA Hugging Face, watchdog
   Caddyfile              reverse proxy : jeton obligatoire, CORS, jeton masqué dans les logs
   weights.json           poids à télécharger par famille (générés depuis les templates)
 mocks/                   faux Vast + Hugging Face, faux ComfyUI + agent, vidéos de test
@@ -163,13 +163,13 @@ y sont masquées automatiquement.
 
 **B. Démarrage**
 - [ ] **Premier test rapide et peu coûteux (conseillé) :** dans **Réglages de location → Modèles à installer**, décoche
-  LTX-2.5 et coche **« Test minimal : Wan 2.1 1.3B »** (≈ 10 Go au lieu de ≈ 52 Go). Coche plutôt
-  **« Test léger : Wan 2.2 5B »** (≈ 18 Go) pour tester aussi **Prolonger**. Tu peux baisser le **disque à 60 Go**.
-  Pour le vrai usage, recoche LTX-2.5 et loue une nouvelle instance.
+  LTX-2.5 **et les deux familles Studio BD**, puis coche **« Test minimal : Wan 2.1 1.3B »** (≈ 10 Go au lieu de
+  ≈ 118 Go). Coche plutôt **« Test léger : Wan 2.2 5B »** (≈ 18 Go) pour tester aussi **Prolonger**. Tu peux baisser le
+  **disque à 60 Go**. Pour le vrai usage, recoche LTX-2.5 et le Studio BD, et loue une nouvelle instance.
 - [ ] Sinon, dans **Réglages de location**, laisse les valeurs par défaut :
   - 1 GPU, RTX PRO 6000 puis RTX 5090 ;
   - fiabilité ≥ 99 % et débit ≥ 500 Mb/s ;
-  - disque 150 Go et modèles **LTX-2.5** seulement ;
+  - disque 200 Go et modèles **LTX-2.5 + Studio BD** (FLUX.2 Dev et Qwen 3.5), ≈ 118 Go ;
   - prix max 2,5 $/h, à ajuster.
 - [ ] **Démarrer** : une liste d'offres apparaît, RTX PRO 6000 en tête si disponibles.
 - [ ] Touche une offre. La fenêtre **Confirmer la location** affiche le prix, puis **Louer à …**.
@@ -179,7 +179,7 @@ y sont masquées automatiquement.
   - ✓ Conteneur démarré (téléchargement de l'image, souvent 3 à 10 min) ;
   - ✓ Accès HTTPS sécurisé (tunnel) ;
   - ✓ ComfyUI installé et lancé (3 à 8 min) ;
-  - Modèles téléchargés : **%** en direct, environ 52 Go pour LTX-2.5 ;
+  - Modèles téléchargés : **%** en direct, environ 118 Go avec les familles par défaut (52 Go pour LTX-2.5 seul) ;
   - ✓ Prêt.
 
 **C. Première génération**
@@ -264,15 +264,16 @@ résolution et la durée. Le résultat se place juste après l'original dans la 
 Onglet **BD** : une bande dessinée complète, de l'histoire aux planches, avec **tes personnages** dessinés de façon
 cohérente sur chaque case.
 
-**Avant de louer**, coche dans *Instance → Réglages de location* :
+Les deux familles du Studio BD sont **cochées par défaut** dans *Instance → Réglages de location*, avec LTX-2.5
+(tes anciens réglages restés sur « LTX-2.5 seul » ont été mis à jour ; un choix personnel, comme une famille de test,
+est respecté) :
 
 | Famille | Rôle | Poids |
 |---|---|---|
 | **Studio BD : FLUX.2 Dev** | dessine les cases ; jusqu'à 4 images de référence par case | ≈ 57 Go : FLUX.2 Dev fp8, encodeur Mistral 3 Small fp8, VAE FLUX.2, LoRA Turbo |
 | **Studio BD : IA d'écriture Qwen 3.5 4B** | découpe l'histoire, décrit tes personnages | ≈ 9 Go |
 
-Ajoute LTX-2.5 si tu veux aussi faire de la vidéo sur la même instance. Le disque proposé grandit tout seul
-(150 Go pour les deux familles BD seules). Prends de préférence un GPU de **48 Go ou plus** (RTX PRO 6000) : sur 32 Go
+Le disque par défaut passe à **200 Go** (LTX-2.5 + Studio BD). Décoche LTX-2.5 si tu ne fais que de la BD. Prends de préférence un GPU de **48 Go ou plus** (RTX PRO 6000) : sur 32 Go
 (RTX 5090), ComfyUI décharge une partie du modèle en mémoire système, ce qui marche mais plus lentement.
 
 **BD express : un titre suffit** (étape *Histoire*). Exemple : « La libraire veut rendre son mari jaloux », 3 pages,
@@ -345,13 +346,44 @@ qu'elles sont récupérées. Les images de référence envoyées sont effacées 
 **Licence :** FLUX.2 [dev] est publié par Black Forest Labs sous une **licence non commerciale**. Lis-la avant tout
 usage commercial de tes planches.
 
+### LoRA (Hugging Face)
+
+Une LoRA ajuste le modèle sans le remplacer : un style de dessin, un mouvement de caméra, un trait d'encre…
+Elles viennent **uniquement de Hugging Face** et marchent avec **LTX-2.5** (onglet Générer) et **FLUX.2 Dev**
+(Style du Studio BD).
+
+1. **Instance → LoRA** (instance prête) : colle le lien Hugging Face.
+   - Lien d'un fichier (`…/blob/main/fichier.safetensors`) : installé directement.
+   - Lien d'un dépôt : la liste de ses fichiers `.safetensors` s'affiche, choisis-en un.
+   - **Faite pour** : LTX-2.5 ou FLUX.2 Dev, deviné d'après le nom, à corriger si besoin.
+2. L'instance la télécharge avec ton token HF (dépôts privés ou à licence compris), avec la progression. Elle est
+   utilisable **aussitôt**, sans redémarrage.
+3. **Générer** (modèles LTX-2.5) : section *LoRA*, jusqu'à 3, chacune avec sa **force** (−1 à 2, 1 par défaut).
+   **Studio BD → Style** : *LoRA de style*, appliquée à **toutes** les images du projet (cases, planches, décors).
+   Les LoRA sont gardées dans les préréglages.
+4. Les LoRA restent sur le disque de l'instance tant qu'elle existe. Ce navigateur se souvient de leurs liens :
+   sur une nouvelle instance, **Réinstaller mes LoRA** les retélécharge. *Supprimer* efface le fichier et l'oublie.
+
+Techniquement, l'interface insère des nœuds officiels `LoraLoaderModelOnly` entre le chargement du modèle et ses
+utilisateurs. Pour FLUX.2, ils sont placés avant la LoRA Turbo du template. Toutes ces combinaisons ont été validées
+contre ComfyUI v0.44.2.
+
+**Limites :**
+- Une LoRA ne marche que sur le modèle pour lequel elle a été entraînée : une LoRA LTX-2 (19B) ou FLUX.1 ne
+  marchera pas sur LTX-2.5 ou FLUX.2.
+- Les IC-LoRA de Lightricks (contrôle, upscaler…) demandent leurs propres workflows : elles ne sont pas prises en charge.
+- LTX-2.5 est en int8 : l'application de LoRA sur ces poids n'a pas pu être vérifiée sur GPU. Ce sera à confirmer
+  à ta première LoRA LTX.
+- **Sécurité** : liens `huggingface.co` uniquement ; fichiers `.safetensors` seulement, avec en-tête vérifié (jamais
+  de pickle) ; 6 Go au plus ; noms nettoyés, rangés dans `models/loras/videogen/`.
+
 ## 7. Coûts
 
 | Poste | Quand | Ordre de grandeur |
 |---|---|---|
 | GPU + machine (`dph_total`) | à la seconde, **tant que l'instance tourne** (y compris pendant l'installation) | affiché sur chaque offre et dans la confirmation ; RTX PRO 6000 plus chère que RTX 5090 |
 | Stockage du disque | **tout le temps** tant que l'instance existe, **même arrêtée** | affiché dans l'onglet Instance quand elle est arrêtée (≈ prix/Go/mois × taille ÷ 30 par jour) |
-| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 52 Go (LTX-2.5), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan ; familles de test : ≈ 10 Go (Wan 2.1 1.3B) ou ≈ 18 Go (Wan 2.2 5B) ; Studio BD : ≈ 57 Go (FLUX.2 Dev) + 9 Go (Qwen 3.5) |
+| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 118 Go avec les familles par défaut (LTX-2.5 ≈ 52 Go + Studio BD ≈ 66 Go), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan ; familles de test : ≈ 10 Go (Wan 2.1 1.3B) ou ≈ 18 Go (Wan 2.2 5B) ; Studio BD : ≈ 57 Go (FLUX.2 Dev) + 9 Go (Qwen 3.5) |
 
 - **Le bandeau de coût** en haut de l'écran donne la durée allumée et le coût estimé de la session (prix/h × durée).
 - **Le crédit Vast restant** est affiché dans l'onglet Instance.
@@ -364,7 +396,7 @@ usage commercial de tes planches.
 Les workflows sont **convertis des templates officiels ComfyUI** (paquet `comfyui-workflow-templates` 0.11.103,
 installé avec ComfyUI v0.44.2), sans modification. La conversion passe par le frontend officiel (« Export API »).
 Chaque combinaison d'options que l'interface peut produire a été **validée par un vrai ComfyUI v0.44.2**
-(`tools/validate-workflows.mjs`, 92 variantes, y compris les options LTX et l'image clé intermédiaire).
+(`tools/validate-workflows.mjs`, 98 variantes, y compris les options LTX, l'image clé intermédiaire et les LoRA).
 
 | Id | Template officiel | Famille (poids) |
 |---|---|---|
@@ -452,6 +484,8 @@ réponses d'erreur, les lignes de démarrage publiées par l'instance et, via **
 - **Même origine pour tous tes sites GitHub Pages.** Tous tes dépôts publiés sur `https://<toi>.github.io` partagent
   le même localStorage et la même origine autorisée par le Worker. Le coffre est chiffré, mais n'héberge pas de
   code non fiable sur un autre de tes sites Pages.
+- **Les LoRA** sont du code de modèle tiers : installe-les depuis des dépôts de confiance. L'agent n'accepte que
+  `huggingface.co`, le format `.safetensors` (en-tête vérifié, pas de pickle exécutable) et 6 Go au plus.
 - **Le token Hugging Face est transmis à l'instance**, comme variable d'environnement. L'hôte Vast (un tiers) peut
   techniquement le lire, tout comme toute personne ayant ta clé Vast (`extra_env`). Utilise un token
   **fine-grained en lecture seule**, révocable à tout moment.
@@ -501,7 +535,8 @@ Les tests de bout en bout couvrent :
 - rappel avant de fermer l'onglet ;
 - file d'attente vidéo : variantes envoyées d'un coup, ajout pendant le calcul, retrait d'une vidéo de la file ;
 - Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
-- BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet.
+- BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet ;
+- LoRA : installation depuis un dépôt (choix du fichier) ou un lien direct, refus d'un dépôt protégé et d'un autre site, LoRA LTX dans Générer et LoRA de style FLUX.2 dans le Studio BD (nœuds vérifiés), suppression, réinstallation sur une nouvelle instance.
 
 Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, travaux fusionnés de la BD express sur les 8 gabarits) contre un vrai ComfyUI :
 `COMFY=http://127.0.0.1:8188 node tools/validate-comic.mjs`.
@@ -511,11 +546,11 @@ Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, trava
 **Vérifié pendant le développement :**
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
-- **Workflows** : les 10 workflows et 92 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
-- **Studio BD** : les 28 requêtes types sont acceptées par ComfyUI v0.44.2 : FLUX.2 Dev avec 0 à 4 références, Qwen 3.5 avec et sans image, bible, et travaux fusionnés de la BD express sur les 8 mises en page. Le PDF et le CBZ produits sont relus par des outils standards.
+- **Workflows** : les 10 workflows et 98 variantes d'options (LoRA comprises) sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
+- **Studio BD** : les 32 requêtes types sont acceptées par ComfyUI v0.44.2 : FLUX.2 Dev avec 0 à 4 références et avec LoRA de style, Qwen 3.5 avec et sans image, bible, et travaux fusionnés de la BD express sur les 8 mises en page. Le PDF et le CBZ produits sont relus par des outils standards.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).
-- **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, testés contre de faux serveurs.
+- **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, LoRA (installation, refus d'un dépôt ou chemin invalide, d'un `.ckpt`, d'un faux safetensors, d'un fichier trop gros, suppression hors du dossier), testés contre de faux serveurs.
 - **Worker** : configuration validée par `wrangler deploy --dry-run`.
 - **Interface** : parcours complet testé contre les mocks.
 

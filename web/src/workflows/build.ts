@@ -1,5 +1,6 @@
 // Registre des modèles (models.json) et construction des requêtes /prompt à partir des workflows API.
 // Module pur (sans DOM) : utilisé par l'interface, les tests unitaires et la validation contre un vrai ComfyUI.
+import { insertLoras, type LoraChoice } from './lora.ts';
 import { comboOptions, type ObjectInfo } from '../comfy/client.ts';
 
 export interface Target {
@@ -74,6 +75,8 @@ export interface ModelDef {
   extras?: ExtraParam[];
   /** Nœud PreviewAny qui renvoie le prompt réellement utilisé (amélioré par Gemma). */
   enhancedPromptNode?: string;
+  /** LoRA acceptées : modèle de base (ex. ltx25) et nœud de chargement du modèle (UNETLoader). */
+  lora?: { base: string; node: string };
 }
 export interface Registry {
   version: number;
@@ -107,6 +110,8 @@ export interface GenParams {
   middleAt?: number;
   /** Valeurs des options propres au modèle (clé de ExtraParam). */
   extras?: Record<string, number | boolean>;
+  /** LoRA choisies (noms vus par ComfyUI) et leur force. */
+  loras?: LoraChoice[];
   outputPrefix: string;
 }
 
@@ -228,6 +233,7 @@ export function buildPrompt(reg: Registry, model: ModelDef, workflow: ApiPrompt,
   }
 
   set(wf, model.output, g.outputPrefix);
+  if (model.lora && g.loras?.length) insertLoras(wf, model.lora.node, g.loras);
   return wf;
 }
 

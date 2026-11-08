@@ -34,13 +34,13 @@
     "flux2dev": {
       "label": "Studio BD : FLUX.2 Dev (images, personnages de référence)",
       "approxGB": 57,
-      "default": false,
+      "default": true,
       "note": "Génère les cases de BD avec tes personnages de référence."
     },
     "qwen35": {
       "label": "Studio BD : IA d’écriture Qwen 3.5 4B",
       "approxGB": 9,
-      "default": false,
+      "default": true,
       "note": "Découpe ton histoire en pages et cases, décrit tes personnages."
     }
   },
@@ -207,7 +207,11 @@
             }
           ]
         }
-      ]
+      ],
+      "lora": {
+        "base": "ltx25",
+        "node": "405:384"
+      }
     },
     {
       "id": "ltx25-i2v",
@@ -373,7 +377,11 @@
             }
           ]
         }
-      ]
+      ],
+      "lora": {
+        "base": "ltx25",
+        "node": "398:384"
+      }
     },
     {
       "id": "ltx25-flf2v",
@@ -558,7 +566,11 @@
             }
           ]
         }
-      ]
+      ],
+      "lora": {
+        "base": "ltx25",
+        "node": "251:230"
+      }
     },
     {
       "id": "wan22-t2v",

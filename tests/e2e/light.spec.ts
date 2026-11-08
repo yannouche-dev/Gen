@@ -10,6 +10,8 @@ test('famille de test minimale : location, génération Wan 2.1 1.3B, LTX grisé
   await enterKeys(page);
   await page.locator('details', { hasText: 'Réglages de location' }).locator('summary').click();
   await page.getByTestId('family-ltx25').uncheck();
+  await page.getByTestId('family-flux2dev').uncheck();
+  await page.getByTestId('family-qwen35').uncheck();
   await page.getByTestId('family-wan21s').check();
   await rentAndWaitReady(page, 503);
   expect((await mockState()).creates[0].body.env.MODELS).toBe('wan21s');

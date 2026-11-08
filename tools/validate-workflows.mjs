@@ -11,6 +11,8 @@ import { buildPrompt, checkAvailability } from '../web/src/workflows/build.ts';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const COMFY = process.env.COMFY || 'http://127.0.0.1:8188';
+// LoRA de validation : un fichier .safetensors quelconque (en-tête vide) dans <ComfyUI>/models/loras/videogen/.
+const LORA = process.env.LORA_NAME || 'videogen/validate-style__ink.safetensors';
 const reg = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/public/models.json'), 'utf8'));
 
 async function upload(name) {
@@ -57,6 +59,11 @@ for (const model of reg.models) {
     }
     variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.default, fps: model.fps.default, extras: lo, enhancePrompt: true, label: 'extras-min' });
     variants.push({ preset: model.resolution.default, ratio: '1:1', duration: 4, fps: model.fps.default, extras: hi, enhancePrompt: true, middleImage: 'MIDDLE', middleAt: 2, label: 'extras-max+milieu' });
+  }
+  // LoRA (modèles LTX-2.5) : une et trois LoRA, seules et avec toutes les options.
+  if (model.lora) {
+    variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.default, fps: model.fps.default, loras: [{ name: LORA, strength: 0.8 }], label: 'lora×1' });
+    variants.push({ preset: model.resolution.default, ratio: '9:16', duration: 4, fps: model.fps.default, enhancePrompt: true, loras: [{ name: LORA, strength: 1 }, { name: LORA, strength: -0.5 }, { name: LORA, strength: 1.5 }], middleImage: model.params.middleImage ? 'MIDDLE' : undefined, middleAt: 2, label: 'lora×3' });
   }
   for (const v of variants) {
     const g = {

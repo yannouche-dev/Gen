@@ -11,9 +11,13 @@ Routes (préfixe /videogen, jeton vérifié par Caddy) :
   GET  /videogen/log?tail=N     fin du journal de démarrage (secrets masqués)
   GET  /videogen/files?prefix=P sorties non encore récupérées dont le chemin commence par P
   POST /videogen/files/delete   {"files":[{"filename","subfolder","type"}]} supprime des sorties
+  GET  /videogen/loras          LoRA installées (models/loras/videogen) et téléchargements en cours
+  POST /videogen/loras          {"repo","path","revision","base"} télécharge une LoRA depuis Hugging Face
+  POST /videogen/loras/delete   {"name"} supprime une LoRA installée
 """
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -140,9 +144,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def hf_file_size(repo, path):
+def hf_file_size(repo, path, revision="main"):
     """Taille attendue d'un fichier HF (HEAD sans suivre la redirection). Retourne (taille, erreur)."""
-    url = "%s/%s/resolve/main/%s" % (HF_BASE, repo, path)
+    url = "%s/%s/resolve/%s/%s" % (HF_BASE, repo, urllib.parse.quote(revision, safe=""),
+                                   urllib.parse.quote(path))
     req = urllib.request.Request(url, method="HEAD")
     tok = os.environ.get("HF_TOKEN", "")
     if tok:
@@ -453,6 +458,179 @@ def list_outputs(prefix):
     return out
 
 
+# --------------------------------------------------------------------------- LoRA
+
+# Téléchargées UNIQUEMENT depuis Hugging Face (HF_BASE), au format .safetensors (jamais de pickle), dans
+# models/loras/videogen/ ; ComfyUI les voit aussitôt (« videogen/<nom>.safetensors »).
+LORA_BASES = ("ltx25", "flux2dev")
+LORA_MAX_BYTES = env_int("LORA_MAX_MB", 6144) * 1024 * 1024
+REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+LORA_PATH_RE = re.compile(r"^[A-Za-z0-9_.@+-][A-Za-z0-9_.@+ -]*(/[A-Za-z0-9_.@+-][A-Za-z0-9_.@+ -]*)*\.safetensors$")
+REV_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+LORA_LOCK = threading.Lock()
+LORA_JOBS = {}
+
+
+def lora_root():
+    return os.path.join(COMFY_DIR, "models", "loras", "videogen")
+
+
+def lora_file_name(repo, path):
+    stem = os.path.basename(path)[: -len(".safetensors")]
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", "%s__%s" % (repo.split("/")[1], stem)).strip("._")[:120]
+    return (name or "lora") + ".safetensors"
+
+
+def is_safetensors(path):
+    """En-tête safetensors valide : 8 octets (taille) puis un objet JSON. Refuse tout autre format."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            n = int.from_bytes(f.read(8), "little")
+            if n < 2 or n > 100 * 1024 * 1024 or 8 + n > size:
+                return False
+            head = json.loads(f.read(n).decode("utf-8"))
+        return isinstance(head, dict)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+
+
+def list_loras():
+    root = lora_root()
+    manifest = read_json(os.path.join(root, "manifest.json"), {})
+    items = []
+    if os.path.isdir(root):
+        for name in sorted(os.listdir(root)):
+            p = os.path.join(root, name)
+            if not name.endswith(".safetensors") or not os.path.isfile(p):
+                continue
+            m = manifest.get(name, {})
+            items.append({"name": "videogen/" + name, "file": name, "size": os.path.getsize(p),
+                          "base": m.get("base"), "repo": m.get("repo"), "path": m.get("path"),
+                          "revision": m.get("revision"), "added": m.get("added")})
+    with LORA_LOCK:
+        jobs = [dict(j) for j in LORA_JOBS.values() if j["state"] != "done"]
+    return {"loras": items, "jobs": jobs, "bases": list(LORA_BASES), "max_bytes": LORA_MAX_BYTES}
+
+
+def lora_error(code, message):
+    return {"error": code, "message": message}
+
+
+def start_lora(repo, path, revision, base):
+    """Vérifie la demande et lance le téléchargement en arrière-plan. Retourne (code HTTP, réponse)."""
+    repo, path, revision, base = (str(x or "").strip() for x in (repo, path, revision or "main", base))
+    if not REPO_RE.match(repo) or ".." in repo:
+        return 400, lora_error("bad_repo", "dépôt Hugging Face invalide (attendu : propriétaire/nom)")
+    if not LORA_PATH_RE.match(path) or ".." in path.split("/"):
+        return 400, lora_error("bad_path", "fichier invalide : seules les LoRA au format .safetensors sont acceptées")
+    if not REV_RE.match(revision):
+        return 400, lora_error("bad_revision", "révision invalide")
+    if base not in LORA_BASES:
+        return 400, lora_error("bad_base", "modèle de base inconnu (ltx25 ou flux2dev)")
+    name = lora_file_name(repo, path)
+    dest = os.path.join(lora_root(), name)
+    with LORA_LOCK:
+        job = LORA_JOBS.get(name)
+        if job and job["state"] == "downloading":
+            return 202, dict(job)
+    if os.path.exists(dest):
+        return 200, {"name": "videogen/" + name, "state": "done", "already": True}
+    size, err = hf_file_size(repo, path, revision)
+    if err:
+        return 400, lora_error("hf", err)
+    if size is not None and size > LORA_MAX_BYTES:
+        return 400, lora_error("too_big", "LoRA trop grosse : %.1f Go (limite %.1f Go)" % (size / 1e9, LORA_MAX_BYTES / 1e9))
+    os.makedirs(lora_root(), exist_ok=True)
+    free = shutil.disk_usage(lora_root()).free
+    if size and free < size + 2 * 1024 ** 3:
+        return 400, lora_error("disk", "disque insuffisant : %.1f Go libres" % (free / 1e9))
+    job = {"name": "videogen/" + name, "file": name, "repo": repo, "path": path, "revision": revision,
+           "base": base, "state": "downloading", "size": size, "done": 0, "error": None, "started": now()}
+    with LORA_LOCK:
+        LORA_JOBS[name] = job
+    threading.Thread(target=download_lora, args=(job,), daemon=True).start()
+    return 202, dict(job)
+
+
+
+def download_lora(job):
+    hf_bin = os.environ.get("HF_BIN") or shutil.which("hf") or "hf"
+    staging = os.path.join(VG_HOME, "staging", "lora__" + job["file"])
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+    env = dict(os.environ, HF_XET_HIGH_PERFORMANCE="1", HF_HUB_DISABLE_TELEMETRY="1",
+               HF_HUB_DISABLE_PROGRESS_BARS="1")
+    stop = threading.Event()
+    proc_ref = {}
+
+    def progress():
+        while not stop.wait(1):
+            done = dir_bytes(staging)
+            with LORA_LOCK:
+                job["done"] = done
+            if done > LORA_MAX_BYTES and proc_ref.get("p"):  # taille non annoncée : on coupe
+                proc_ref["p"].kill()
+
+    t = threading.Thread(target=progress, daemon=True)
+    t.start()
+    cmd = [hf_bin, "download", job["repo"], job["path"], "--local-dir", staging, "--revision", job["revision"]]
+    error = None
+    try:
+        p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc_ref["p"] = p
+        out, _ = p.communicate(timeout=3 * 3600)
+        src = os.path.join(staging, job["path"])
+        if p.returncode != 0 or not os.path.exists(src):
+            error = "échec du téléchargement : %s" % mask((out or "")[-400:])
+        elif os.path.getsize(src) > LORA_MAX_BYTES:
+            error = "LoRA trop grosse"
+        elif not is_safetensors(src):
+            error = "fichier refusé : ce n'est pas un .safetensors valide"
+        else:
+            dest = os.path.join(lora_root(), job["file"])
+            shutil.move(src, dest)
+            with LORA_LOCK:
+                mpath = os.path.join(lora_root(), "manifest.json")
+                manifest = read_json(mpath, {})
+                manifest[job["file"]] = {"repo": job["repo"], "path": job["path"], "revision": job["revision"],
+                                         "base": job["base"], "added": now()}
+                write_json(mpath, manifest)
+    except Exception as e:  # pragma: no cover - réseau, disque
+        error = "échec du téléchargement : %s" % mask(str(e))
+    finally:
+        stop.set()
+        t.join()
+        shutil.rmtree(staging, ignore_errors=True)
+    with LORA_LOCK:
+        if error:
+            job["state"] = "error"
+            job["error"] = error[:600]
+        else:
+            job["state"] = "done"
+            job["done"] = job["size"] = os.path.getsize(os.path.join(lora_root(), job["file"]))
+    publish("VIDEOGEN_LORA=%s %s" % (job["file"], "erreur" if error else "installée"))
+
+
+def delete_lora(name):
+    file = str(name or "")
+    if file.startswith("videogen/"):
+        file = file[len("videogen/"):]
+    if "/" in file or "\\" in file or not file.endswith(".safetensors") or file.startswith("."):
+        return 400, lora_error("bad_name", "nom refusé")
+    p = os.path.join(lora_root(), file)
+    if not os.path.isfile(p):
+        return 404, lora_error("not_found", "LoRA introuvable")
+    os.remove(p)
+    with LORA_LOCK:
+        mpath = os.path.join(lora_root(), "manifest.json")
+        manifest = read_json(mpath, {})
+        manifest.pop(file, None)
+        write_json(mpath, manifest)
+        LORA_JOBS.pop(file, None)
+    return 200, {"deleted": "videogen/" + file}
+
+
 # --------------------------------------------------------------------------- serveur
 
 WATCHDOG = Watchdog()
@@ -527,17 +705,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"files": list_outputs(prefix)})
             except ValueError:
                 return self.send_json(400, {"error": "bad_prefix"})
+        if path == "/videogen/loras":
+            return self.send_json(200, list_loras())
         return self.send_json(404, {"error": "not_found"})
 
     def do_POST(self):
         path = self.path.partition("?")[0]
-        if path != "/videogen/files/delete":
+        if path not in ("/videogen/files/delete", "/videogen/loras", "/videogen/loras/delete"):
             return self.send_json(404, {"error": "not_found"})
         try:
             length = min(int(self.headers.get("Content-Length", "0")), 65536)
             data = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(data, dict):
+                raise ValueError
         except (ValueError, OSError):
             return self.send_json(400, {"error": "bad_json"})
+        if path == "/videogen/loras":
+            code, body = start_lora(data.get("repo"), data.get("path"), data.get("revision"), data.get("base"))
+            return self.send_json(code, body)
+        if path == "/videogen/loras/delete":
+            code, body = delete_lora(data.get("name"))
+            return self.send_json(code, body)
         deleted, missing, refused = [], [], []
         for f in data.get("files", [])[:100]:
             name = str(f.get("filename", ""))

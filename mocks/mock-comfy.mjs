@@ -72,12 +72,14 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     prompts: [],
     outputs: [],
     outputCount: 0,
+    loras: [],
+    loraJobs: [],
   };
   const sockets = new Map(); // clientId -> Set<ws>
 
   const api = {
     reset() {
-      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputs: [], outputCount: 0 });
+      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputs: [], outputCount: 0, loras: [], loraJobs: [] });
     },
     setInstalled(fams) {
       st.installed = fams;
@@ -156,6 +158,11 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
           if (Array.isArray(spec[0])) spec[0] = spec[0].filter((v) => !all.has(v) || allowed.has(v));
         }
       }
+    }
+    // LoRA installées par l'agent (models/loras/videogen/…), visibles aussitôt comme dans le vrai ComfyUI.
+    for (const cls of ['LoraLoaderModelOnly', 'LoraLoader']) {
+      const spec = out[cls]?.input.required?.lora_name;
+      if (spec && Array.isArray(spec[0])) spec[0] = [...spec[0], ...st.loras.map((l) => l.name)];
     }
     return out;
   }
@@ -301,6 +308,33 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       st.deletions.push(...files);
       st.outputs = st.outputs.filter((o) => !files.some((f) => f.filename === o.filename));
       return send(res, 200, { deleted: files.map((f) => f.filename), missing: [], refused: [] });
+    }
+    // LoRA (agent) : même validation que instance/agent.py, téléchargement simulé.
+    if (p === '/videogen/loras' && req.method === 'GET') return send(res, 200, { loras: st.loras, jobs: st.loraJobs.filter((j) => j.state !== 'done'), bases: ['ltx25', 'flux2dev'], max_bytes: 6 * 2 ** 30 });
+    if (p === '/videogen/loras' && req.method === 'POST') {
+      const b = json();
+      if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(b.repo ?? '')) return send(res, 400, { error: 'bad_repo', message: 'dépôt Hugging Face invalide' });
+      if (!/\.safetensors$/.test(b.path ?? '') || String(b.path).split('/').includes('..')) return send(res, 400, { error: 'bad_path', message: 'seules les LoRA au format .safetensors sont acceptées' });
+      if (!['ltx25', 'flux2dev'].includes(b.base)) return send(res, 400, { error: 'bad_base', message: 'modèle de base inconnu' });
+      if (/gated/.test(b.repo)) return send(res, 400, { error: 'hf', message: `accès refusé à ${b.repo} : accepte la licence sur huggingface.co` });
+      const stem = String(b.path).split('/').pop().replace(/\.safetensors$/, '');
+      const file = `${b.repo.split('/')[1]}__${stem}`.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^[._]+|[._]+$/g, '').slice(0, 120) + '.safetensors';
+      if (st.loras.some((l) => l.file === file)) return send(res, 200, { name: `videogen/${file}`, state: 'done', already: true });
+      const job = { name: `videogen/${file}`, file, repo: b.repo, path: b.path, revision: b.revision ?? 'main', base: b.base, state: 'downloading', size: 300e6, done: 0, error: null };
+      st.loraJobs.push(job);
+      setTimeout(() => (job.done = 150e6), T(500));
+      setTimeout(() => {
+        job.state = 'done';
+        job.done = job.size;
+        st.loras.push({ name: job.name, file, size: job.size, base: job.base, repo: job.repo, path: job.path, revision: job.revision, added: Date.now() / 1000 });
+      }, T(1500));
+      return send(res, 202, job);
+    }
+    if (p === '/videogen/loras/delete' && req.method === 'POST') {
+      const name = String(json().name ?? '');
+      const before = st.loras.length;
+      st.loras = st.loras.filter((l) => l.name !== name);
+      return before === st.loras.length ? send(res, 404, { error: 'not_found', message: 'LoRA introuvable' }) : send(res, 200, { deleted: name });
     }
     if (!comfyUp) return send(res, 502, 'Bad Gateway', 'text/plain');
 

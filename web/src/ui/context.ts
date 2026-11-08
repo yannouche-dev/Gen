@@ -7,6 +7,7 @@ import type { BuildInfo } from '../vast/onstart.ts';
 import { checkAvailability, type ApiPrompt, type Availability, type GenParams, type ModelDef, type Registry } from '../workflows/build.ts';
 import type { ObjectInfo } from '../comfy/client.ts';
 import { gallery } from '../media/gallery.ts';
+import type { LoraInfo, LoraJob } from '../workflows/lora.ts';
 
 declare const __BUILD__: BuildInfo;
 export const BUILD: BuildInfo = __BUILD__;
@@ -34,6 +35,9 @@ class AppContext {
   availability = new Map<string, Availability>();
   gallery = gallery;
   route: Route = 'instance';
+  /** LoRA installées sur l'instance prête, et téléchargements en cours. */
+  loras: { list: LoraInfo[]; jobs: LoraJob[]; loaded: boolean } = { list: [], jobs: [], loaded: false };
+  private loraTimer: ReturnType<typeof setTimeout> | null = null;
   prefill: Prefill | null = null;
   private listeners = new Set<Listener>();
   private objectInfoFor: string | null = null;
@@ -89,6 +93,34 @@ class AppContext {
       if (!av.ok) journal.info('modèles', `${m.label} indisponible sur le serveur`, av);
     }
     this.emit('availability');
+  }
+
+  /** Relit les LoRA de l'instance ; suit les téléchargements en cours (toutes les 2 s) jusqu'à leur fin. */
+  async refreshLoras(): Promise<void> {
+    const c = this.manager.comfy;
+    if (this.loraTimer) clearTimeout(this.loraTimer);
+    this.loraTimer = null;
+    if (!c) {
+      this.loras = { list: [], jobs: [], loaded: false };
+      this.emit('loras');
+      return;
+    }
+    const before = new Set(this.loras.list.map((l) => l.name));
+    try {
+      const r = await c.listLoras();
+      this.loras = { list: r.loras ?? [], jobs: r.jobs ?? [], loaded: true };
+    } catch {
+      /* agent momentanément injoignable : nouvel essai au prochain passage */
+    }
+    const added = this.loras.list.some((l) => !before.has(l.name));
+    if (added || this.loras.list.length !== before.size) void this.refreshAvailability(true).catch(() => undefined);
+    this.emit('loras');
+    if (this.loras.jobs.some((j) => j.state === 'downloading')) this.loraTimer = setTimeout(() => void this.refreshLoras(), 2000);
+  }
+
+  /** LoRA installées pour un modèle de base (ltx25, flux2dev). */
+  lorasFor(base: string): LoraInfo[] {
+    return this.loras.list.filter((l) => l.base === base);
   }
 
   invalidateAvailability(): void {

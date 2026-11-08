@@ -21,6 +21,7 @@ import { planComic, countImages, type ImageJob, type OutputTarget } from '../com
 import { listProjects, saveProject, deleteProject, putImage, getImage, deleteImage, toJpeg } from '../comic/store.ts';
 import { renderPage, canvasToBlob, type BubbleBox } from '../comic/render.ts';
 import { buildCbz, buildPdf } from '../comic/export.ts';
+import { loraPicker } from './lora.ts';
 
 type Step = 'chars' | 'sets' | 'style' | 'story' | 'pages' | 'export';
 const STEPS: [Step, string][] = [
@@ -61,7 +62,8 @@ export class ComicScreen {
   constructor() {
     app.on((w) => {
       if (w === 'route' && app.route === 'comic') void this.open();
-      if (w === 'availability' && app.route === 'comic') this.render();
+      if ((w === 'availability' || w === 'loras') && app.route === 'comic' && this.step === 'style') this.render();
+      else if (w === 'availability' && app.route === 'comic') this.render();
     });
     app.manager.onChange((s) => {
       if (s.phase === 'ready' && app.manager.comfy && listPending().some((j) => j.meta?.comic)) void this.resumePending();
@@ -160,7 +162,7 @@ export class ComicScreen {
         workflow: flux,
         params: DUMMY(seed),
         uploads: refs,
-        prebuilt: (names, prefix) => buildFlux(flux, { prompt, refs: names, width: size.width, height: size.height, seed, turbo, outputPrefix: prefix }),
+        prebuilt: (names, prefix) => buildFlux(flux, { prompt, refs: names, width: size.width, height: size.height, seed, turbo, loras: this.styleLoras(), outputPrefix: prefix }),
         kind: 'image',
         stallMinutes: app.settings.stallMinutes,
         instanceId: app.manager.state.instance!.id,
@@ -203,6 +205,15 @@ export class ComicScreen {
       this.current = null;
       releaseAwake('bd');
     }
+  }
+
+  /** LoRA de style du projet réellement présentes sur l'instance (les autres sont ignorées, avec un avertissement). */
+  private styleLoras() {
+    const want = this.p?.style.loras ?? [];
+    const have = new Set(app.loras.list.map((l) => l.name));
+    const ok = want.filter((l) => have.has(l.name));
+    if (ok.length < want.length) toast('LoRA de style absente(s) de l’instance ignorée(s) (onglet Instance → Réinstaller mes LoRA)', 'info');
+    return ok;
   }
 
   private async guard(name: string, fn: () => Promise<void>) {
@@ -558,7 +569,7 @@ export class ComicScreen {
       this.pageIdx = 0;
       await this.save(true);
       this.setStatus('express', '3/3 · Envoi des dessins dans la file de l’instance…');
-      const jobs = planComic(p);
+      const jobs = planComic(p, { loras: this.styleLoras() });
       await this.queueJobs(p, jobs);
       this.step = 'pages';
       journal.info('bd', `BD express : ${p.pages.length} page(s), ${countImages(jobs)} image(s) en file`);
@@ -608,6 +619,8 @@ export class ComicScreen {
         h('small', { class: 'hint' }, 'Une case, une couverture ou une page d’un album dont tu veux le trait et les couleurs (pas le contenu).'),
       ),
       h('label', { class: 'check' }, turbo, ' Rapide (FLUX.2 Turbo, 8 étapes) — décoche pour la qualité finale (20 étapes)'),
+      loraPicker('flux2dev', (st.loras ??= []), () => this.save(), () => this.render(), 'style-lora'),
+      h('small', { class: 'hint' }, 'Une LoRA de style s’applique à toutes les images du projet (cases, planches de personnages, décors) : le trait reste le même partout.'),
     );
   }
 
@@ -885,7 +898,7 @@ export class ComicScreen {
     return this.guard(all ? 'régénération de la page' : 'génération de la page', async () => {
       if (all) for (const pa of page.panels) pa.seed = undefined;
       p.seed ??= randomSeed();
-      const jobs = planComic(p, { pageIds: [page.id], onlyEmpty: !all });
+      const jobs = planComic(p, { pageIds: [page.id], onlyEmpty: !all, loras: this.styleLoras() });
       if (!jobs.some((j) => j.id.startsWith('page-'))) return void toast('Toutes les cases ont déjà une image', 'info');
       await this.queueJobs(p, jobs);
     });
@@ -896,7 +909,7 @@ export class ComicScreen {
     if (!this.ready('flux')) return;
     return this.guard('génération de toutes les pages', async () => {
       p.seed ??= randomSeed();
-      const jobs = planComic(p, { onlyEmpty: true });
+      const jobs = planComic(p, { onlyEmpty: true, loras: this.styleLoras() });
       if (!jobs.length) return void toast('Toutes les cases ont déjà une image', 'info');
       await this.queueJobs(p, jobs);
     });

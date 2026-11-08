@@ -2,6 +2,7 @@
 // - FLUX.2 Dev (template image_flux2_fp8.json) : 0 à N images de référence (chaîne ReferenceLatent) ;
 // - Qwen 3.5 4B (template llm_qwen3_5_text_gen.json) : texte, avec ou sans image.
 import type { ApiPrompt } from '../workflows/build.ts';
+import { insertLoras, type LoraChoice } from '../workflows/lora.ts';
 
 /** Repères dans workflows/flux2-dev-ref.json (identifiants issus de la conversion du template officiel). */
 export const FLUX = {
@@ -18,6 +19,8 @@ export const FLUX = {
     { load: '46', scale: '62:41', encode: '62:40', ref: '62:39' },
   ],
   conditioningSource: '62:26',
+  /** Chargement du modèle (les LoRA choisies se branchent juste après, avant la LoRA Turbo du template). */
+  unet: '62:12',
   sink: { node: '62:22', input: 'conditioning' },
   /** Nœuds qui lisaient la taille d'une image de référence (remplacés par une taille explicite). */
   sizeProbes: ['62:66'],
@@ -43,6 +46,8 @@ export interface FluxInput {
   seed: number;
   turbo: boolean;
   outputPrefix: string;
+  /** LoRA de style du projet (FLUX.2 Dev). */
+  loras?: LoraChoice[];
 }
 
 export function buildFlux(template: ApiPrompt, f: FluxInput): ApiPrompt {
@@ -86,6 +91,7 @@ export function buildFlux(template: ApiPrompt, f: FluxInput): ApiPrompt {
     prev = [`${k}:ref`, 0];
   });
   wf[FLUX.sink.node].inputs[FLUX.sink.input] = prev;
+  insertLoras(wf, FLUX.unet, f.loras);
 
   // Aucun lien ne doit pointer vers un nœud supprimé.
   for (const [id, n] of Object.entries(wf)) {

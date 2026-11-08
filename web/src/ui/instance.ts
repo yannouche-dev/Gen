@@ -1,5 +1,6 @@
 // Écran « Instance » : démarrer (redémarrer ou louer une offre choisie), suivi du démarrage, statut,
 // coût, arrêter, détruire, réglages de location.
+import { LoraCard } from './lora.ts';
 import { h, replace, toast, fmtDuration, fmtMoney, fmtBytes } from './dom.ts';
 import { confirmDialog } from './dialog.ts';
 import { app } from './context.ts';
@@ -32,7 +33,7 @@ export class InstanceScreen {
   private busy = false;
 
   constructor() {
-    this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.steps), this.actions, this.offersBox, this.settingsBox);
+    this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.steps), this.actions, this.offersBox, new LoraCard().el, this.settingsBox);
     app.manager.onChange(() => this.update());
     app.on((w) => {
       if (w === 'settings' || w === 'vault') this.update();

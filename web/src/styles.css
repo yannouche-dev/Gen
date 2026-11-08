@@ -856,3 +856,37 @@ details > summary {
 .express .row .field {
   flex: 1;
 }
+
+/* ---------------------------------------------------------------- LoRA */
+.lora-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.lora-row .row .input {
+  flex: 1;
+}
+.lora-row .range {
+  flex: 1;
+}
+.lora-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lora-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lora-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

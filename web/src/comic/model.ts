@@ -56,6 +56,8 @@ export interface ComicStyle {
   refImageId?: string;
   /** FLUX.2 « Turbo » (8 étapes) : plus rapide ; décoché, 20 étapes pour la qualité finale. */
   turbo: boolean;
+  /** LoRA FLUX.2 appliquées à toutes les images du projet (style, trait…). */
+  loras?: { name: string; strength: number }[];
 }
 
 export interface Project {

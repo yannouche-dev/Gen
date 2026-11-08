@@ -40,7 +40,8 @@ test('parcours complet sur mobile', async ({ page }) => {
   expect(create.body.env.ALLOWED_ORIGIN).toBe('http://127.0.0.1:4173');
   expect(create.body.env.HF_TOKEN).toBe(HF_TOKEN);
   expect(create.body.env.COMFY_ACCESS_TOKEN.length).toBeGreaterThanOrEqual(43);
-  expect(create.body.env.MODELS).toBe('ltx25');
+  expect(create.body.env.MODELS).toBe('ltx25,flux2dev,qwen35'); // Studio BD installé par défaut
+  expect(create.body.disk).toBe(200);
   expect(create.body.label).toBe('videogen');
   expect(create.body.runtype).toBe('ssh');
 

@@ -9,6 +9,8 @@ import { planComic } from '../web/src/comic/express.ts';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const COMFY = process.env.COMFY || 'http://127.0.0.1:8188';
+// LoRA de validation : un fichier .safetensors quelconque (en-tête vide) dans <ComfyUI>/models/loras/videogen/.
+const LORA = process.env.LORA_NAME || 'videogen/validate-style__ink.safetensors';
 const load = (f) => JSON.parse(fs.readFileSync(path.join(ROOT, 'web/public', f), 'utf8'));
 const flux = load(FLUX.workflow);
 const qwen = load(QWEN.workflow);
@@ -70,6 +72,17 @@ e.pages = LAYOUTS.map((l, gi) => ({
 for (const job of planComic(e)) {
   const wf = job.build(flux, job.uploads.map(() => refs[0]), 'videogen/comic_validate_express');
   if (!(await check(`BD express ${job.label} (${Object.keys(wf).length} nœuds)`, wf))) failures++;
+}
+
+// LoRA de style FLUX.2 (avant la LoRA Turbo du template), sur une case et sur toute une BD express.
+for (const turbo of [true, false]) {
+  const wf = buildFlux(flux, { prompt: plan.prompt, refs: refs.slice(0, 2), width: 1024, height: 1024, seed: 5, turbo, loras: [{ name: LORA, strength: 0.9 }, { name: LORA, strength: 0.4 }], outputPrefix: 'videogen/comic_validate_lora' });
+  if (!(await check(`FLUX.2 + 2 LoRA de style, Turbo ${turbo ? 'oui' : 'non'}`, wf))) failures++;
+}
+e.style.loras = [{ name: LORA, strength: 0.8 }];
+for (const job of planComic(e).slice(0, 2)) {
+  const wf = job.build(flux, job.uploads.map(() => refs[0]), 'videogen/comic_validate_express_lora');
+  if (!(await check(`BD express + LoRA ${job.label}`, wf))) failures++;
 }
 console.log(failures ? `${failures} échec(s)` : 'Toutes les requêtes BD sont valides.');
 process.exit(failures ? 1 : 0);

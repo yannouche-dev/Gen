@@ -53,9 +53,10 @@ const settingKey = (s: Setting) => `s-${s.id}`;
  * référence générée ; `pageIds` limite aux pages voulues (défaut : toutes) ; `onlyEmpty` saute les cases
  * qui ont déjà une image.
  */
-export function planComic(p: Project, opts: { pageIds?: string[]; onlyEmpty?: boolean } = {}): ImageJob[] {
+export function planComic(p: Project, opts: { pageIds?: string[]; onlyEmpty?: boolean; loras?: { name: string; strength: number }[] } = {}): ImageJob[] {
   const base = p.seed ?? 1;
   const turbo = p.style.turbo;
+  const loras = opts.loras ?? p.style.loras;
   const assets: Asset[] = [
     ...p.characters
       .filter((c) => !c.imageIds.length)
@@ -70,7 +71,7 @@ export function planComic(p: Project, opts: { pageIds?: string[]; onlyEmpty?: bo
     characters: p.characters.map((c) => (c.imageIds.length ? c : { ...c, imageIds: [`@${charKey(c)}`] })),
     settings: (p.settings ?? []).map((s) => (s.imageIds.length ? s : { ...s, imageIds: [`@${settingKey(s)}`] })),
   };
-  const assetGraph = (flux: ApiPrompt, a: Asset) => buildFlux(flux, { prompt: a.prompt, refs: [], ...a.size, seed: a.seed, turbo, outputPrefix: 'x' });
+  const assetGraph = (flux: ApiPrompt, a: Asset) => buildFlux(flux, { prompt: a.prompt, refs: [], ...a.size, seed: a.seed, turbo, loras, outputPrefix: 'x' });
   const jobs: ImageJob[] = [];
   if (assets.length) {
     jobs.push({
@@ -105,7 +106,7 @@ export function planComic(p: Project, opts: { pageIds?: string[]; onlyEmpty?: bo
         const parts: GraphPart[] = needed.map((a) => ({ key: a.key, graph: assetGraph(flux, a), save: false }));
         for (const x of plans) {
           const refs: FluxRef[] = x.plan.images.map((img) => (img.startsWith('@') ? [img, 0] : names[uploads.indexOf(img)]));
-          parts.push({ key: `p-${x.pa.id}`, graph: buildFlux(flux, { prompt: x.plan.prompt, refs, ...x.size, seed: x.seed, turbo, outputPrefix: 'x' }), save: true });
+          parts.push({ key: `p-${x.pa.id}`, graph: buildFlux(flux, { prompt: x.plan.prompt, refs, ...x.size, seed: x.seed, turbo, loras, outputPrefix: 'x' }), save: true });
         }
         return mergeGraphs(parts, prefix);
       },
