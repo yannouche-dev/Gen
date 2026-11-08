@@ -29,11 +29,17 @@ export interface BubbleBox {
   h: number;
 }
 
+/** Typographie française : espace fine insécable avant ? ! : ; » et après «, pour ne jamais isoler la ponctuation. */
+export function frenchSpacing(text: string): string {
+  return text.replace(/[ \u00a0]+([?!:;»])/g, '\u202f$1').replace(/«[ \u00a0]+/g, '«\u202f');
+}
+
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
   const lines: string[] = [];
-  for (const para of text.split('\n')) {
+  for (const para of frenchSpacing(text).split('\n')) {
     let cur = '';
-    for (const word of para.split(/\s+/).filter(Boolean)) {
+    // Coupure aux seules espaces ordinaires (les espaces insécables restent dans le mot).
+    for (const word of para.split(/[ \t]+/).filter(Boolean)) {
       const test = cur ? `${cur} ${word}` : word;
       if (ctx.measureText(test).width > maxW && cur) {
         lines.push(cur);

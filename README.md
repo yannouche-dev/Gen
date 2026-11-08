@@ -326,7 +326,14 @@ reproduire un visage à partir d'une photo.
      **Générer toutes les pages** fait de même pour toute la BD ; **Régénérer** refait une case avec une nouvelle seed.
    - Chaque case est générée **au format exact de son emplacement** (≈ 1 mégapixel).
    - Les bulles se déplacent au doigt avec la poignée ✥.
-6. **Export** : **PDF A4**, **CBZ** (liseuses de BD, avec `ComicInfo.xml`) ou **PNG** page par page. Les fichiers
+   - **Plein écran** (bouton ⛶ ou toucher la page) : la planche en haute définition sur tout l'écran.
+     - Zoom : pincement à deux doigts, double-tap (×2,5 sur le point touché), molette, boutons − et + (jusqu'à ×6).
+     - Déplacement au doigt dans la page zoomée ; balayage gauche/droite ou ‹ › pour changer de page.
+     - ⤓ enregistre la page affichée en PNG.
+     - Fermeture : ✕, Échap ou le bouton « retour » du téléphone, qui ne quitte pas l'application.
+   - Les répliques suivent la typographie française : « ? », « ! », « : » ne se retrouvent jamais seuls en début de ligne.
+6. **Export** : **PDF A4**, **CBZ** (liseuses de BD, avec `ComicInfo.xml`) ou **PNG** page par page, et
+   **Lire la BD en plein écran** depuis la page 1. Les fichiers
    sont fabriqués dans le téléphone.
 
 **Comment la cohérence est obtenue.** Pour chaque case, les images de référence des personnages présents, et du
@@ -543,6 +550,7 @@ Les tests de bout en bout couvrent :
 - nouveau tunnel (nouvelle adresse) pendant une génération : vidéo récupérée, bouton *Générer* réactivé ;
 - étapes de démarrage détaillées : dépendances pip, démarrage de ComfyUI, débit et temps restant, durées, avancement global qui ne recule pas ;
 - Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
+- visionneuse plein écran : zoom aux boutons, double-tap, molette et pincement, déplacement, balayage entre pages, PNG de la page, fermeture par ✕ et par « retour » ;
 - BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet ;
 - LoRA : installation depuis un dépôt (choix du fichier) ou un lien direct, refus d'un dépôt protégé et d'un autre site, LoRA LTX dans Générer et LoRA de style FLUX.2 dans le Studio BD (nœuds vérifiés), suppression, réinstallation sur une nouvelle instance.
 

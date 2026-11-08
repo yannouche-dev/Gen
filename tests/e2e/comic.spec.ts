@@ -224,3 +224,92 @@ test('BD express : un titre → histoire, personnages, décors et pages, tout en
   await expect(page.locator('[data-testid^="set-s"] .thumb-box img')).toHaveCount(2);
   await expect(page.getByTestId('project-select').locator('option', { hasText: 'La libraire veut rendre son mari jaloux' })).toHaveCount(1);
 });
+
+test('Studio BD : page en plein écran, zoom (boutons, double-tap, molette, pincement), pages au balayage, fermeture', async ({ page }) => {
+  await enterKeys(page);
+  await page.getByTestId('tab-comic').click();
+  page.once('dialog', (d) => d.accept('Zoom'));
+  await page.getByTestId('new-project').click();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId('step-story').click();
+    await page.getByTestId('add-page').click(); // ouvre l'étape Pages
+  }
+  await page.getByTestId('page-tab-1').click();
+
+  // Ouverture depuis la page (toucher l'aperçu)
+  await page.getByTestId('page-preview').locator('canvas').click();
+  const viewer = page.getByTestId('page-viewer');
+  await expect(viewer).toBeVisible();
+  await expect(page.getByTestId('viewer-count')).toHaveText('1 / 2');
+  const img = viewer.locator('canvas.viewer-page');
+  expect(await img.evaluate((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([2481, 3509]); // A4 en haute définition
+  const scale = () => img.evaluate((c) => Number((c as HTMLElement).dataset.scale));
+
+  // Boutons
+  await page.getByTestId('viewer-zoom-in').click();
+  await expect(page.getByTestId('viewer-zoom')).toHaveText('150 %');
+  await page.getByTestId('viewer-fit').click();
+  await expect(page.getByTestId('viewer-zoom')).toHaveText('100 %');
+  // Double-tap : ×2,5 sur le point touché, puis retour
+  const box = (await page.getByTestId('viewer-stage').boundingBox())!;
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.dblclick(cx, cy);
+  await expect(page.getByTestId('viewer-zoom')).toHaveText('250 %');
+  // Déplacement de la page zoomée
+  const before = await img.evaluate((c) => (c as HTMLElement).style.transform);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 80, cy + 120, { steps: 5 });
+  await page.mouse.up();
+  expect(await img.evaluate((c) => (c as HTMLElement).style.transform)).not.toBe(before);
+  await page.mouse.dblclick(cx, cy);
+  await expect(page.getByTestId('viewer-zoom')).toHaveText('100 %');
+  // Molette
+  await page.mouse.move(cx, cy);
+  await page.mouse.wheel(0, -300);
+  await expect.poll(scale).toBeGreaterThan(1.2);
+  await page.getByTestId('viewer-fit').click();
+  // Pincement à deux doigts (événements pointer)
+  await page.getByTestId('viewer-stage').evaluate((el, [x0, y0]) => {
+    const ev = (type: string, id: number, x: number) => el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y0, bubbles: true, cancelable: true }));
+    ev('pointerdown', 11, x0 - 50);
+    ev('pointerdown', 12, x0 + 50);
+    ev('pointermove', 12, x0 + 150);
+    ev('pointerup', 12, x0 + 150);
+    ev('pointerup', 11, x0 - 50);
+  }, [cx, cy]);
+  await expect(page.getByTestId('viewer-zoom')).toHaveText('200 %');
+  await page.getByTestId('viewer-fit').click();
+  // Balayage vers la gauche : page suivante
+  await page.mouse.move(cx + 120, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx - 120, cy, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByTestId('viewer-count')).toHaveText('2 / 2');
+  await expect(page.getByTestId('viewer-next')).toBeDisabled();
+  await page.getByTestId('viewer-prev').click();
+  await expect(page.getByTestId('viewer-count')).toHaveText('1 / 2');
+  // Enregistrer la page affichée
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('viewer-download').click()]);
+  expect(dl.suggestedFilename()).toBe('Zoom_page1.png');
+
+  // Fermeture : bouton « retour » du téléphone, puis ✕ (l'application reste ouverte)
+  await page.goBack();
+  await expect(viewer).toHaveCount(0);
+  await expect(page.getByTestId('page-preview')).toBeVisible();
+  await page.getByTestId('page-fullscreen').click();
+  await expect(viewer).toBeVisible();
+  await page.getByTestId('viewer-close').click();
+  await expect(viewer).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Studio BD' })).toBeVisible();
+
+  // Lecture de toute la BD depuis l'export
+  await page.getByTestId('step-export').click();
+  await page.getByTestId('read-fullscreen').click();
+  await expect(page.getByTestId('viewer-count')).toHaveText('1 / 2');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('viewer-count')).toHaveText('2 / 2');
+  await page.getByTestId('viewer-close').click();
+  await expect(viewer).toHaveCount(0);
+});

@@ -910,3 +910,93 @@ details > summary {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* ---------------------------------------------------------------- visionneuse plein écran */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #111;
+  color: #fff;
+  overscroll-behavior: contain;
+}
+.viewer-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: zoom-in;
+  user-select: none;
+}
+.viewer-stage.zoomed {
+  cursor: grab;
+}
+.viewer-stage.loading::after {
+  content: 'Chargement…';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #bbb;
+}
+.viewer-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  box-shadow: 0 2px 18px rgb(0 0 0 / 60%);
+  background: #fff;
+}
+.viewer-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(6px);
+}
+.viewer-top {
+  top: 0;
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+.viewer-bottom {
+  bottom: 0;
+  justify-content: center;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+.viewer-title {
+  flex: 1;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-btn {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+  font: inherit;
+  font-size: 1.25rem;
+}
+.viewer-btn:disabled {
+  opacity: 0.35;
+}
+.viewer-count,
+.viewer-zoom {
+  min-width: 3.6em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.viewer-sep {
+  width: 10px;
+}
+.page-canvas {
+  cursor: zoom-in;
+}

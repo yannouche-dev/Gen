@@ -296,3 +296,12 @@ describe('BD express : bible, décors, travaux fusionnés', () => {
     expect(normalizeProject(old as Project).settings).toEqual([]);
   });
 });
+
+describe('Bulles : typographie française', () => {
+  it('espace insécable avant la ponctuation haute et dans les guillemets', async () => {
+    const { frenchSpacing } = await import('../../web/src/comic/render.ts');
+    expect(frenchSpacing('Qui a bien pu m’écrire ?')).toBe('Qui a bien pu m’écrire\u202f?');
+    expect(frenchSpacing('Vite ! Il dit : « non »')).toBe('Vite\u202f! Il dit\u202f: «\u202fnon\u202f»');
+    expect(frenchSpacing('Déjà collé?')).toBe('Déjà collé?');
+  });
+});

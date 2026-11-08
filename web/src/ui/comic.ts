@@ -22,6 +22,7 @@ import { listProjects, saveProject, deleteProject, putImage, getImage, deleteIma
 import { renderPage, canvasToBlob, type BubbleBox } from '../comic/render.ts';
 import { buildCbz, buildPdf } from '../comic/export.ts';
 import { loraPicker } from './lora.ts';
+import { openViewer } from './viewer.ts';
 
 type Step = 'chars' | 'sets' | 'style' | 'story' | 'pages' | 'export';
 const STEPS: [Step, string][] = [
@@ -723,7 +724,8 @@ export class ComicScreen {
         h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Mise en page'), layout),
         page.panels.length > max ? h('p', { class: 'msg warn' }, `Ce gabarit n’affiche que ${max} case(s) sur ${page.panels.length}.`) : null,
         preview,
-        h('small', { class: 'hint' }, 'Fais glisser les poignées ✥ pour déplacer les bulles.'),
+        h('button', { type: 'button', class: 'btn', 'data-testid': 'page-fullscreen', on: { click: () => this.fullscreen(p, this.pageIdx) } }, '⛶ Plein écran (zoom)'),
+        h('small', { class: 'hint' }, 'Fais glisser les poignées ✥ pour déplacer les bulles ; touche la page pour la voir en plein écran.'),
         genAll,
         regenAll,
         genBook,
@@ -744,9 +746,32 @@ export class ComicScreen {
     }));
   }
 
+  /** Visionneuse plein écran : page en haute définition, zoom, pages suivantes au balayage. */
+  private fullscreen(p: Project, start: number) {
+    if (!p.pages.length) return;
+    openViewer({
+      count: p.pages.length,
+      start,
+      title: p.title,
+      render: async (i) => {
+        const imgs = await this.images(p.pages[i]);
+        const { canvas } = await renderPage(p.pages[i], imgs, 1.5);
+        for (const b of imgs) b?.close();
+        return canvas;
+      },
+      download: (i) => void (async () => {
+        const imgs = await this.images(p.pages[i]);
+        const { canvas } = await renderPage(p.pages[i], imgs, 1, false);
+        for (const b of imgs) b?.close();
+        download(await canvasToBlob(canvas, 'image/png'), `${p.title}_page${i + 1}.png`);
+      })(),
+    });
+  }
+
   private async drawPreview(page: Page, box: HTMLElement) {
     const { canvas, boxes } = await renderPage(page, await this.images(page), 0.5);
     canvas.className = 'page-canvas';
+    canvas.addEventListener('click', () => this.p && this.fullscreen(this.p, Math.max(0, this.p.pages.indexOf(page))));
     replace(box, canvas, ...boxes.map((b) => this.handle(page, b, box)));
   }
 
@@ -1184,6 +1209,7 @@ export class ComicScreen {
       h('button', { type: 'button', class: 'btn btn-primary btn-big', disabled: !p.pages.length || !!this.busy, 'data-testid': 'export-pdf', on: { click: () => run('pdf') } }, 'PDF (A4)'),
       h('button', { type: 'button', class: 'btn btn-big', disabled: !p.pages.length || !!this.busy, 'data-testid': 'export-cbz', on: { click: () => run('cbz') } }, 'CBZ (liseuses de BD)'),
       h('button', { type: 'button', class: 'btn', disabled: !p.pages.length || !!this.busy, 'data-testid': 'export-png', on: { click: () => run('png') } }, 'PNG (une image par page)'),
+      h('button', { type: 'button', class: 'btn', disabled: !p.pages.length, 'data-testid': 'read-fullscreen', on: { click: () => this.fullscreen(p, 0) } }, '⛶ Lire la BD en plein écran'),
       status,
       h('small', { class: 'hint' }, 'Les fichiers sont fabriqués dans ton téléphone ; rien n’est envoyé ailleurs.'),
     );
