@@ -9,3 +9,4 @@ playwright-report/
 .wrangler/
 __pycache__/
 *.pyc
+*.whl
