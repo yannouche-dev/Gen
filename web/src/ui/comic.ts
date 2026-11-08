@@ -12,17 +12,20 @@ import { randomSeed, checkAvailability, type ApiPrompt, type GenParams } from '.
 import { Generation, GenerationError, type GenEvents } from '../comfy/generate.ts';
 import { explainError } from '../comfy/errors.ts';
 import {
-  LAYOUTS, SHOTS, STYLES, PAGE_W, PAGE_H, cellRects, generationSize, getLayout, layoutFor, newPanel, newProject, panelPrompt, turnaroundPrompt,
-  describeCharacterPrompt, storyPrompt, parseStory, storyToPages, uid, type Bubble, type Character, type Page, type Panel, type Project,
+  LAYOUTS, SHOTS, STYLES, TONES, PAGE_W, PAGE_H, SETTING_SIZE, SHEET_SIZE, cellRects, generationSize, getLayout, layoutFor, newPanel, newProject, panelPrompt,
+  turnaroundPrompt, settingPrompt, describeCharacterPrompt, storyPrompt, parseStory, storyToPages, biblePrompt, parseBible, applyBible, uid,
+  type Bubble, type Character, type Page, type Panel, type Project, type Setting,
 } from '../comic/model.ts';
-import { buildFlux, buildQwen, FLUX, QWEN } from '../comic/flux.ts';
+import { buildFlux, buildQwen, outputKey, FLUX, QWEN } from '../comic/flux.ts';
+import { planComic, countImages, type ImageJob, type OutputTarget } from '../comic/express.ts';
 import { listProjects, saveProject, deleteProject, putImage, getImage, deleteImage, toJpeg } from '../comic/store.ts';
 import { renderPage, canvasToBlob, type BubbleBox } from '../comic/render.ts';
 import { buildCbz, buildPdf } from '../comic/export.ts';
 
-type Step = 'chars' | 'style' | 'story' | 'pages' | 'export';
+type Step = 'chars' | 'sets' | 'style' | 'story' | 'pages' | 'export';
 const STEPS: [Step, string][] = [
   ['chars', 'Personnages'],
+  ['sets', 'Décors'],
   ['style', 'Style'],
   ['story', 'Histoire'],
   ['pages', 'Pages'],
@@ -51,6 +54,8 @@ export class ComicScreen {
   private statusEls = new Map<string, HTMLElement>();
   private current: Generation | null = null;
   private resuming = false;
+  /** Travaux d'images envoyés dans la file de l'instance (pages complètes, planches). */
+  private bg: { job: ImageJob; gen: Generation; status: string; projectId: string }[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -239,6 +244,7 @@ export class ComicScreen {
         ? h('p', { class: 'msg warn', 'data-testid': 'comic-missing' }, `Absent de l’instance : ${[av.flux === false ? 'FLUX.2 Dev' : '', av.qwen === false ? 'Qwen 3.5' : ''].filter(Boolean).join(', ')}. Coche ces familles dans les réglages de location et loue une nouvelle instance.`)
         : null,
       this.busy ? h('p', { class: 'msg info', 'data-testid': 'comic-busy' }, `En cours : ${this.busy}`, ' ', h('button', { type: 'button', class: 'btn btn-small', on: { click: () => void this.current?.cancel() } }, 'Annuler')) : null,
+      this.bg.length ? this.renderJobs() : null,
     ];
     replace(
       this.el,
@@ -274,6 +280,8 @@ export class ComicScreen {
     switch (this.step) {
       case 'chars':
         return this.renderChars(p);
+      case 'sets':
+        return this.renderSets(p);
       case 'style':
         return this.renderStyle(p);
       case 'story':
@@ -351,7 +359,7 @@ export class ComicScreen {
           'div',
           { class: 'row-wrap' },
           h('button', { type: 'button', class: 'btn btn-small', disabled: !c.imageIds.length || !!this.busy, 'data-testid': `char-describe-${c.id}`, on: { click: () => void this.describe(c) } }, 'Décrire avec l’IA'),
-          h('button', { type: 'button', class: 'btn btn-small', disabled: !c.imageIds.length || !!this.busy, 'data-testid': `char-sheet-${c.id}`, on: { click: () => void this.turnaround(c) } }, 'Planche de poses'),
+          h('button', { type: 'button', class: 'btn btn-small', disabled: (!c.imageIds.length && !c.description.trim()) || !!this.busy, 'data-testid': `char-sheet-${c.id}`, on: { click: () => void this.turnaround(c) } }, c.imageIds.length ? 'Planche de poses' : 'Dessiner d’après la description'),
           h('button', { type: 'button', class: 'btn btn-small btn-danger', on: { click: () => void this.removeChar(c) } }, 'Supprimer'),
         ),
         status,
@@ -360,7 +368,7 @@ export class ComicScreen {
     return h(
       'section',
       { class: 'stack' },
-      h('p', { class: 'hint card' }, 'Ajoute 1 à 3 images nettes de chaque personnage (visage et tenue visibles). Elles sont envoyées au modèle comme « images de référence » pour chaque case où il apparaît. La « planche de poses » génère des vues de face, profil et dos pour renforcer la cohérence.'),
+      h('p', { class: 'hint card' }, 'Ajoute 1 à 3 images nettes de chaque personnage (visage et tenue visibles). Elles sont envoyées au modèle comme « images de référence » pour chaque case où il apparaît. La « planche de poses » génère des vues de face, profil et dos pour renforcer la cohérence. Sans photo, le personnage est dessiné d’après sa description, et ce dessin devient sa référence.'),
       ...p.characters.map(card),
       h('button', { type: 'button', class: 'btn btn-primary', 'data-testid': 'add-char', on: { click: () => void this.addChar() } }, '+ Ajouter un personnage'),
     );
@@ -402,9 +410,9 @@ export class ComicScreen {
   private turnaround(c: Character) {
     if (!this.ready('flux')) return;
     return this.guard(`planche de poses de ${c.name}`, async () => {
-      const ref = await getImage(c.imageIds[0]);
-      if (!ref) throw new Error('Image de référence introuvable');
-      const blob = await this.runImage(c.id, `FLUX.2 · poses de ${c.name}`, [ref], turnaroundPrompt(this.p!, c), { width: 1536, height: 864 }, randomSeed());
+      const ref = c.imageIds.length ? await getImage(c.imageIds[0]) : null;
+      if (c.imageIds.length && !ref) throw new Error('Image de référence introuvable');
+      const blob = await this.runImage(c.id, `FLUX.2 · poses de ${c.name}`, ref ? [ref] : [], turnaroundPrompt(this.p!, c, !!ref), SHEET_SIZE, randomSeed());
       const id = await putImage(this.p!.id, await toJpeg(blob));
       if (c.imageIds.length >= 3) {
         const old = c.imageIds.pop()!;
@@ -413,6 +421,147 @@ export class ComicScreen {
       c.imageIds.push(id);
       await this.save(true);
       toast('Planche de poses ajoutée aux références', 'ok');
+    });
+  }
+
+  // ---------------------------------------------------------------- décors
+
+  private renderSets(p: Project): HTMLElement {
+    const card = (st: Setting) => {
+      const name = h('input', { class: 'input', value: st.name, placeholder: 'Nom (ex. : la librairie)', 'data-testid': `set-name-${st.id}` }) as HTMLInputElement;
+      name.addEventListener('input', () => ((st.name = name.value), this.save()));
+      const desc = h('textarea', { class: 'input', rows: 3, placeholder: 'Ce qu’on y voit : architecture, meubles, couleurs, lumière…', 'data-testid': `set-desc-${st.id}` }) as HTMLTextAreaElement;
+      desc.value = st.description;
+      desc.addEventListener('input', () => ((st.description = desc.value), this.save()));
+      const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', class: 'input', disabled: st.imageIds.length >= 2 }) as HTMLInputElement;
+      file.addEventListener('change', async () => {
+        const f = file.files?.[0];
+        if (!f) return;
+        st.imageIds.unshift(await putImage(p.id, await toJpeg(f)));
+        await this.save(true);
+        this.render();
+      });
+      const status = h('small', { class: 'hint' });
+      this.statusEls.set(st.id, status);
+      return h(
+        'div',
+        { class: 'card', 'data-testid': `set-${st.id}` },
+        h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nom'), name),
+        h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Description'), desc),
+        h('div', { class: 'field' }, h('span', { class: 'field-label' }, `Image de référence (${st.imageIds.length}/2)`), h('div', { class: 'thumbs' }, ...st.imageIds.map((id) => this.thumb(id, st.name, () => void (async () => {
+          st.imageIds = st.imageIds.filter((x) => x !== id);
+          await deleteImage(id).catch(() => undefined);
+          await this.save(true);
+          this.render();
+        })()))), file),
+        h('div', { class: 'row-wrap' },
+          h('button', { type: 'button', class: 'btn btn-small', disabled: !st.description.trim() || !!this.busy, 'data-testid': `set-gen-${st.id}`, on: { click: () => void this.drawSetting(st) } }, st.imageIds.length ? 'Redessiner le décor' : 'Dessiner le décor'),
+          h('button', { type: 'button', class: 'btn btn-small btn-danger', on: { click: () => void this.removeSetting(st) } }, 'Supprimer')),
+        status,
+      );
+    };
+    return h(
+      'section',
+      { class: 'stack' },
+      h('p', { class: 'hint card' }, 'Les lieux qui reviennent (la librairie, l’appartement…). Leur image de référence est envoyée au modèle pour chaque case qui s’y passe : mêmes murs, mêmes meubles, mêmes couleurs d’une page à l’autre. Ajoute une photo ou fais dessiner le décor d’après sa description.'),
+      ...p.settings.map(card),
+      h('button', { type: 'button', class: 'btn btn-primary', 'data-testid': 'add-set', on: { click: () => void (async () => {
+        p.settings.push({ id: uid('s'), name: `Décor ${p.settings.length + 1}`, description: '', imageIds: [] });
+        await this.save(true);
+        this.render();
+      })() } }, '+ Ajouter un décor'),
+    );
+  }
+
+  private async removeSetting(st: Setting) {
+    const p = this.p!;
+    if (!(await confirmDialog({ title: `Supprimer le décor « ${st.name} » ?`, ok: 'Supprimer', danger: true }))) return;
+    for (const id of st.imageIds) await deleteImage(id).catch(() => undefined);
+    p.settings = p.settings.filter((x) => x !== st);
+    for (const pg of p.pages) for (const pa of pg.panels) if (pa.setting === st.id) pa.setting = undefined;
+    await this.save(true);
+    this.render();
+  }
+
+  private drawSetting(st: Setting) {
+    if (!this.ready('flux')) return;
+    return this.guard(`décor « ${st.name} »`, async () => {
+      const blob = await this.runImage(st.id, `FLUX.2 · décor ${st.name}`, [], settingPrompt(this.p!, st), SETTING_SIZE, randomSeed());
+      const old = st.imageIds.length >= 2 ? st.imageIds.pop() : undefined;
+      if (old) await deleteImage(old).catch(() => undefined);
+      st.imageIds.unshift(await putImage(this.p!.id, await toJpeg(blob)));
+      await this.save(true);
+      toast('Décor dessiné : il servira de référence', 'ok');
+    });
+  }
+
+  // ---------------------------------------------------------------- BD express
+
+  private renderExpress(p: Project): HTMLElement {
+    const title = h('input', { class: 'input', value: p.title, placeholder: 'ex. : La libraire veut rendre son mari jaloux', 'data-testid': 'express-title' }) as HTMLInputElement;
+    const pages = h('select', { class: 'input', 'data-testid': 'express-pages' }) as HTMLSelectElement;
+    for (let n = 1; n <= 6; n++) pages.append(h('option', { value: n, selected: n === 3 }, `${n} page${n > 1 ? 's' : ''}`));
+    const tone = h('select', { class: 'input', 'data-testid': 'express-tone' }) as HTMLSelectElement;
+    for (const [k, l] of TONES) tone.append(h('option', { value: k, selected: k === (p.tone ?? 'comédie') }, l));
+    const style = STYLES.find((x) => x.id === p.style.preset)?.label ?? p.style.preset;
+    const status = h('small', { class: 'hint', 'data-testid': 'express-status' });
+    this.statusEls.set('express', status);
+    return h(
+      'section',
+      { class: 'card express' },
+      h('h2', null, 'BD express : un titre suffit'),
+      h('p', { class: 'hint' }, 'L’IA écrit l’histoire page par page, crée les personnages et les décors, les dessine une fois pour toutes, puis dessine toutes les cases avec ces références : même style, mêmes visages, mêmes lieux. Tout part dans la file de l’instance ; tu peux verrouiller le téléphone.'),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Titre'), title),
+      h('div', { class: 'row' },
+        h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Pages'), pages),
+        h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Ton'), tone)),
+      h('p', { class: 'hint' }, `Style : ${style}${p.style.turbo ? ' · rapide (Turbo)' : ' · qualité'} — `, h('button', { type: 'button', class: 'btn btn-small', on: { click: () => ((this.step = 'style'), this.render()) } }, 'changer')),
+      p.characters.length ? h('p', { class: 'hint' }, `Tes personnages (${p.characters.map((c) => c.name).join(', ')}) seront les héros de l’histoire.`) : null,
+      h('button', { type: 'button', class: 'btn btn-primary btn-big', disabled: !!this.busy, 'data-testid': 'express-go', on: { click: () => void this.express(title.value.trim(), Number(pages.value), tone.value) } }, 'Créer la BD'),
+      status,
+    );
+  }
+
+  /** Demande un JSON à Qwen 3.5, avec une nouvelle tentative si la réponse est illisible. */
+  private async askJson<T>(label: string, prompt: string, maxLength: number, temperature: number, parse: (t: string) => T): Promise<T> {
+    let last: unknown;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const text = await this.runText('express', `Qwen 3.5 · ${label}`, prompt, null, maxLength, temperature);
+      try {
+        return parse(text);
+      } catch (e) {
+        last = e;
+        journal.warn('bd', `Réponse de l’IA illisible (${label}, essai ${attempt})`, text.slice(0, 3000));
+      }
+    }
+    throw new Error(`Réponse de l’IA illisible (${last instanceof Error ? last.message : last}) : relance`);
+  }
+
+  private express(title: string, pages: number, tone: string) {
+    const p = this.p!;
+    if (!title) return toast('Donne un titre à ta BD', 'error');
+    if (!this.ready('qwen') || !this.ready('flux')) return;
+    return this.guard('BD express', async () => {
+      if (p.pages.length && !(await confirmDialog({ title: 'Remplacer les pages existantes ?', body: ['La BD express réécrit l’histoire et redessine toutes les cases.'], ok: 'Remplacer', danger: true }))) return;
+      p.title = title;
+      p.tone = tone;
+      p.seed = randomSeed();
+      this.setStatus('express', '1/3 · L’IA écrit l’histoire, les personnages et les décors…');
+      const bible = await this.askJson('histoire', biblePrompt(p, title, pages), 2048, 0.8, (t) => parseBible(t, pages));
+      applyBible(p, bible);
+      await this.save(true);
+      journal.info('bd', `BD express « ${title} » : ${bible.characters.length} personnage(s), ${bible.settings.length} décor(s)`);
+      this.setStatus('express', '2/3 · L’IA découpe les pages en cases et écrit les dialogues…');
+      const story = await this.askJson('découpage', storyPrompt(p, pages), 4096, 0.6, parseStory);
+      for (const pg of p.pages) for (const pa of pg.panels) if (pa.imageId) await deleteImage(pa.imageId).catch(() => undefined);
+      p.pages = storyToPages(p, story);
+      this.pageIdx = 0;
+      await this.save(true);
+      this.setStatus('express', '3/3 · Envoi des dessins dans la file de l’instance…');
+      const jobs = planComic(p);
+      await this.queueJobs(p, jobs);
+      this.step = 'pages';
+      journal.info('bd', `BD express : ${p.pages.length} page(s), ${countImages(jobs)} image(s) en file`);
     });
   }
 
@@ -475,17 +624,17 @@ export class ComicScreen {
     for (let n = 1; n <= 8; n++) pages.append(h('option', { value: n, selected: n === Math.max(1, Math.min(8, p.pages.length || 2)) }, `${n} page${n > 1 ? 's' : ''}`));
     const status = h('small', { class: 'hint' });
     this.statusEls.set('story', status);
-    return h(
+    return h('div', { class: 'stack' }, this.renderExpress(p), h(
       'section',
       { class: 'card' },
-      h('h2', null, 'Histoire'),
+      h('h2', null, 'Histoire (manuel)'),
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Synopsis'), syn),
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nombre de pages'), pages),
       h('button', { type: 'button', class: 'btn btn-primary btn-big', disabled: !!this.busy, 'data-testid': 'story-split', on: { click: () => void this.split(Number(pages.value)) } }, 'Découper avec l’IA (pages, cases, dialogues)'),
       status,
       h('button', { type: 'button', class: 'btn', 'data-testid': 'add-page', on: { click: () => void this.addPage() } }, '+ Ajouter une page vide'),
       p.pages.length ? h('p', { class: 'hint' }, `${p.pages.length} page(s), ${p.pages.reduce((n, pg) => n + pg.panels.length, 0)} case(s). Voir l’étape Pages.`) : null,
-    );
+    ));
   }
 
   private split(pages: number) {
@@ -540,6 +689,10 @@ export class ComicScreen {
     void this.drawPreview(page, preview);
     const genAll = h('button', { type: 'button', class: 'btn btn-primary btn-big', disabled: !!this.busy, 'data-testid': 'gen-page', on: { click: () => void this.generatePage(page, false) } }, 'Générer les cases vides');
     const regenAll = h('button', { type: 'button', class: 'btn', disabled: !!this.busy, on: { click: () => void this.generatePage(page, true) } }, 'Régénérer toute la page');
+    const empty = p.pages.reduce((n, pg) => n + pg.panels.slice(0, cellRects(getLayout(pg.layout)).length).filter((x) => !x.imageId).length, 0);
+    const genBook = p.pages.length > 1 && empty
+      ? h('button', { type: 'button', class: 'btn', disabled: !!this.busy, 'data-testid': 'gen-book', on: { click: () => void this.generateBook() } }, `Générer toutes les pages (${empty} case(s) vide(s))`)
+      : null;
     return h(
       'section',
       { class: 'stack' },
@@ -553,6 +706,7 @@ export class ComicScreen {
         h('small', { class: 'hint' }, 'Fais glisser les poignées ✥ pour déplacer les bulles.'),
         genAll,
         regenAll,
+        genBook,
         h('div', { class: 'row-wrap' },
           h('button', { type: 'button', class: 'btn btn-small', on: { click: () => void this.addPage() } }, '+ Page'),
           h('button', { type: 'button', class: 'btn btn-small btn-danger', on: { click: () => void this.removePage(page) } }, 'Supprimer la page')),
@@ -619,6 +773,9 @@ export class ComicScreen {
     const shot = h('select', { class: 'input' }) as HTMLSelectElement;
     for (const [k, label] of SHOTS) shot.append(h('option', { value: k, selected: k === pa.shot }, label));
     shot.addEventListener('change', () => ((pa.shot = shot.value), this.save()));
+    const setting = h('select', { class: 'input', 'data-testid': `panel-setting-${i + 1}` }, h('option', { value: '' }, '—')) as HTMLSelectElement;
+    for (const st of p.settings) setting.append(h('option', { value: st.id, selected: st.id === pa.setting }, st.name));
+    setting.addEventListener('change', () => ((pa.setting = setting.value || undefined), this.save()));
     const chars = h(
       'div',
       { class: 'chips' },
@@ -641,7 +798,8 @@ export class ComicScreen {
       txt.addEventListener('change', () => this.render());
       return h('div', { class: 'bubble-row' }, h('div', { class: 'row' }, kind, b.speaker ? h('span', { class: 'hint' }, b.speaker) : null, h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Supprimer', on: { click: () => ((pa.bubbles = pa.bubbles.filter((x) => x !== b)), this.save(), this.render()) } }, '✕')), txt);
     };
-    const status = h('small', { class: `hint ${pa.status === 'error' ? 'err' : ''}`, 'data-testid': `panel-status-${i + 1}` }, pa.status === 'error' ? pa.error ?? 'Erreur' : pa.imageId ? `Image prête · seed ${pa.seed ?? '?'}` : 'Pas encore générée');
+    const queued = this.bg.some((b) => b.job.outputs.some((o) => o.id === pa.id));
+    const status = h('small', { class: `hint ${pa.status === 'error' ? 'err' : ''}`, 'data-testid': `panel-status-${i + 1}` }, pa.status === 'error' ? pa.error ?? 'Erreur' : queued ? 'Dans la file de l’instance…' : pa.imageId ? `Image prête · seed ${pa.seed ?? '?'}` : 'Pas encore générée');
     this.statusEls.set(pa.id, status);
     const move = (d: number) => {
       const j = i + d;
@@ -656,6 +814,7 @@ export class ComicScreen {
       h('summary', null, h('span', { class: 'panel-title' }, `Case ${i + 1}`, pa.description ? h('small', { class: 'hint' }, ` · ${pa.description.slice(0, 70)}${pa.description.length > 70 ? '…' : ''}`) : null), pa.imageId ? this.thumb(pa.imageId, `case ${i + 1}`) : null),
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Description'), desc),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Personnages présents'), p.characters.length ? chars : h('small', { class: 'hint' }, 'Ajoute des personnages à l’étape Personnages.')),
+      p.settings.length ? h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Décor'), setting) : null,
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Cadrage'), shot),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Bulles'), ...pa.bubbles.map(bubbleRow),
         h('div', { class: 'row-wrap' },
@@ -719,25 +878,185 @@ export class ComicScreen {
     await this.save(true);
   }
 
+  /** Une page = un seul travail dans la file de l'instance (toutes ses cases, références comprises). */
   private generatePage(page: Page, all: boolean) {
+    const p = this.p!;
     if (!this.ready('flux')) return;
     return this.guard(all ? 'régénération de la page' : 'génération de la page', async () => {
-      const max = cellRects(getLayout(page.layout)).length;
-      const todo = page.panels.slice(0, max).filter((pa) => all || !pa.imageId);
-      if (!todo.length) return void toast('Toutes les cases ont déjà une image', 'info');
-      let done = 0;
-      for (const pa of todo) {
-        try {
-          await this.generatePanel(page, pa, all);
-          done++;
-          this.render();
-        } catch (e) {
-          if (e instanceof GenerationError && e.cancelled) break;
-          journal.warn('bd', `Case non générée : ${e instanceof Error ? e.message : e}`);
-        }
-      }
-      toast(`${done}/${todo.length} case(s) générée(s)`, done === todo.length ? 'ok' : 'error');
+      if (all) for (const pa of page.panels) pa.seed = undefined;
+      p.seed ??= randomSeed();
+      const jobs = planComic(p, { pageIds: [page.id], onlyEmpty: !all });
+      if (!jobs.some((j) => j.id.startsWith('page-'))) return void toast('Toutes les cases ont déjà une image', 'info');
+      await this.queueJobs(p, jobs);
     });
+  }
+
+  private generateBook() {
+    const p = this.p!;
+    if (!this.ready('flux')) return;
+    return this.guard('génération de toutes les pages', async () => {
+      p.seed ??= randomSeed();
+      const jobs = planComic(p, { onlyEmpty: true });
+      if (!jobs.length) return void toast('Toutes les cases ont déjà une image', 'info');
+      await this.queueJobs(p, jobs);
+    });
+  }
+
+  // ---------------------------------------------------------------- travaux dans la file de l'instance
+
+  /**
+   * Envoie des travaux d'images dans la file de ComfyUI, dans l'ordre, sans attendre leur fin : l'instance
+   * les enchaîne (GPU sans temps mort), même si le téléphone dort. Les images arrivent au fil de l'eau.
+   */
+  private async queueJobs(p: Project, jobs: ImageJob[]) {
+    const c = app.manager.comfy!;
+    const flux = this.wf.flux!;
+    const inst = app.manager.state.instance!;
+    // Cases de ces travaux : on retire la marque d'erreur éventuelle.
+    for (const j of jobs) for (const o of j.outputs) if (o.kind === 'panel') {
+      const pa = p.pages.flatMap((g) => g.panels).find((x) => x.id === o.id);
+      if (pa) {
+        pa.status = 'running';
+        pa.error = undefined;
+      }
+    }
+    await this.save(true);
+    for (const [i, job] of jobs.entries()) {
+      const uploads: Blob[] = [];
+      for (const id of job.uploads) {
+        const b = await getImage(id);
+        if (!b) throw new Error('Image de référence introuvable dans le téléphone');
+        uploads.push(b);
+      }
+      const entry = { job, gen: null as unknown as Generation, status: 'Envoi…', projectId: p.id };
+      let queued!: () => void;
+      const onQueued = new Promise<void>((r) => (queued = r));
+      entry.gen = new Generation({
+        client: c,
+        registry: app.registry!,
+        model: { id: 'flux2-bd', label: `FLUX.2 · ${job.label}` },
+        workflow: flux,
+        params: DUMMY(0),
+        uploads,
+        prebuilt: (names, prefix) => job.build(flux, names, prefix),
+        kind: 'image',
+        multi: true,
+        stallMinutes: app.settings.stallMinutes,
+        instanceId: inst.id,
+        meta: { comic: true, express: true, projectId: p.id, label: job.label, outputs: job.outputs },
+        events: {
+          onStatus: (t) => this.jobStatus(entry, t),
+          onProgress: (pr) => this.jobStatus(entry, `${Math.round(pr.overall * 100)} % · ${pr.label}${pr.max ? ` (${pr.value}/${pr.max})` : ''}`),
+          onQueued: () => queued(),
+        },
+      });
+      this.track(p, entry);
+      this.setStatus('story', `Envoi dans la file de l’instance : ${i + 1}/${jobs.length}…`);
+      await Promise.race([onQueued, entry.gen.promise.catch(() => undefined)]);
+    }
+    journal.info('bd', `${jobs.length} travail(aux) dans la file de l’instance (${countImages(jobs)} image(s))`);
+    toast(`${countImages(jobs)} image(s) en file sur l’instance : tu peux verrouiller le téléphone`, 'ok');
+  }
+
+  private jobStatus(entry: { status: string; job: ImageJob }, t: string) {
+    entry.status = t;
+    const el = this.statusEls.get(`job-${entry.job.id}`);
+    if (el) el.textContent = `${entry.job.label} · ${t}`;
+  }
+
+  private setStatus(key: string, t: string) {
+    const el = this.statusEls.get(key);
+    if (el) el.textContent = t;
+  }
+
+  /** Suit un travail jusqu'à sa fin et range ses images (ou ce qui a pu être produit avant une erreur). */
+  private track(p: Project, entry: { job: ImageJob; gen: Generation; status: string; projectId: string }) {
+    this.bg.push(entry);
+    holdAwake('bd-file');
+    this.render();
+    entry.gen.promise
+      .then(async (r) => {
+        await this.applyOutputs(p, entry.job.outputs, r.files ?? [], entry.gen.prefix);
+        toast(`${entry.job.label.split(' :')[0]} prête`, 'ok');
+      })
+      .catch(async (e) => {
+        const cancelled = e instanceof GenerationError && e.cancelled;
+        const msg = e instanceof GenerationError ? e.readable.title : e instanceof Error ? e.message : String(e);
+        // Images déjà produites avant l'erreur : récupérées quand même.
+        const salvaged = await this.salvage(p, entry.job.outputs, entry.gen.prefix).catch(() => 0);
+        for (const o of entry.job.outputs) if (o.kind === 'panel') {
+          const pa = p.pages.flatMap((g) => g.panels).find((x) => x.id === o.id);
+          if (pa && pa.status === 'running') {
+            pa.status = cancelled ? 'empty' : 'error';
+            pa.error = cancelled ? undefined : msg;
+          }
+        }
+        await this.save(true);
+        if (!cancelled) toast(`${entry.job.label} : ${msg}${salvaged ? ` (${salvaged} image(s) récupérée(s))` : ''}`, 'error');
+      })
+      .finally(() => {
+        this.bg = this.bg.filter((x) => x !== entry);
+        if (!this.bg.length) releaseAwake('bd-file');
+        if (app.route === 'comic') this.render();
+      });
+  }
+
+  private async salvage(p: Project, outputs: OutputTarget[], prefix: string): Promise<number> {
+    const c = app.manager.comfy;
+    if (!c || !prefix) return 0;
+    const files = (await c.listOutputs(prefix)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f.filename));
+    const got: { filename: string; blob: Blob }[] = [];
+    for (const f of files) got.push({ filename: f.filename, blob: await c.view(f) });
+    if (files.length) void c.deleteFiles(files).catch(() => undefined);
+    return this.applyOutputs(p, outputs, got, prefix);
+  }
+
+  /** Range chaque image reçue à sa place : planche de personnage, image de décor ou case. */
+  private async applyOutputs(p: Project, outputs: OutputTarget[], files: { filename: string; blob: Blob }[], prefix: string): Promise<number> {
+    let n = 0;
+    for (const f of files) {
+      const key = outputKey(f.filename, prefix);
+      const o = outputs.find((x) => x.key === key);
+      if (!o) continue;
+      const id = await putImage(p.id, await toJpeg(f.blob));
+      n++;
+      if (o.kind === 'char') {
+        const ch = p.characters.find((x) => x.id === o.id);
+        if (ch) ch.imageIds.unshift(id);
+      } else if (o.kind === 'setting') {
+        const st = p.settings.find((x) => x.id === o.id);
+        if (st) st.imageIds.unshift(id);
+      } else {
+        const pa = p.pages.flatMap((g) => g.panels).find((x) => x.id === o.id);
+        if (!pa) continue;
+        const old = pa.imageId;
+        pa.imageId = id;
+        pa.seed = o.seed;
+        pa.status = 'done';
+        pa.error = undefined;
+        if (old) await deleteImage(old).catch(() => undefined);
+      }
+    }
+    await this.save(true);
+    if (app.route === 'comic') this.render();
+    return n;
+  }
+
+  private renderJobs(): HTMLElement {
+    return h(
+      'div',
+      { class: 'msg info', 'data-testid': 'bd-jobs' },
+      h('strong', null, `Sur l’instance : ${this.bg.length} travail(aux) dans la file`),
+      ...this.bg.map((b) => {
+        const el = h('div', { class: 'hint', 'data-testid': 'bd-job' }, `${b.job.label} · ${b.status}`);
+        this.statusEls.set(`job-${b.job.id}`, el);
+        return el;
+      }),
+      h('small', { class: 'hint' }, 'Le GPU enchaîne tout, même téléphone verrouillé ; les images arrivent ici au fil de l’eau.'),
+      h('button', { type: 'button', class: 'btn btn-small btn-danger', 'data-testid': 'bd-cancel-all', on: { click: async () => {
+        if (await confirmDialog({ title: 'Annuler tous les travaux en file ?', body: ['Les images déjà terminées sont gardées.'], ok: 'Tout annuler', danger: true })) for (const b of this.bg) void b.gen.cancel();
+      } } }, 'Tout annuler'),
+    );
   }
 
   /** Reprend les cases dont la génération a continué sur l'instance pendant la veille du téléphone. */
@@ -756,6 +1075,7 @@ export class ComicScreen {
   }
 
   private async resumeJob(job: PendingJob) {
+    if (job.meta?.express) return this.resumeExpress(job);
     const m = job.meta as { projectId: string; pageId: string; panelId: string; seed: number };
     const p = this.projects.find((x) => x.id === m.projectId) ?? (await listProjects()).find((x) => x.id === m.projectId);
     const pa = p?.pages.find((g) => g.id === m.pageId)?.panels.find((x) => x.id === m.panelId);
@@ -784,6 +1104,32 @@ export class ComicScreen {
     } catch (e) {
       journal.warn('bd', 'Reprise de la case impossible', e instanceof Error ? e.message : e);
     }
+  }
+
+  private async resumeExpress(job: PendingJob) {
+    const m = job.meta as { projectId: string; label: string; outputs: OutputTarget[] };
+    const p = this.projects.find((x) => x.id === m.projectId);
+    if (!p || job.instanceId !== app.manager.state.instance?.id || this.bg.some((b) => b.gen.id === job.promptId)) {
+      if (!p) removePending(job.promptId);
+      return;
+    }
+    journal.info('bd', `Reprise du travail « ${m.label} » (projet « ${p.title} »)`);
+    const pseudo: ImageJob = { id: `resume-${job.promptId}`, label: m.label, uploads: [], outputs: m.outputs, build: () => ({}) };
+    const entry = { job: pseudo, gen: null as unknown as Generation, status: 'Reprise du suivi…', projectId: p.id };
+    entry.gen = new Generation({
+      client: app.manager.comfy!,
+      registry: app.registry!,
+      model: { id: job.modelId, label: `FLUX.2 · ${m.label}` },
+      workflow: this.wf.flux!,
+      params: job.params,
+      kind: 'image',
+      multi: true,
+      stallMinutes: app.settings.stallMinutes,
+      instanceId: job.instanceId,
+      resume: job,
+      events: { onStatus: (t) => this.jobStatus(entry, t) },
+    });
+    this.track(p, entry);
   }
 
   // ---------------------------------------------------------------- export

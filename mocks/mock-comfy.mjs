@@ -19,15 +19,38 @@ const PANEL = fs.readFileSync(path.join(HERE, 'fixtures/panel.png'));
 
 /** Réponses factices de Qwen 3.5 (TextGenerate) : découpage en pages (JSON) ou description de personnage. */
 export function fakeLlm(prompt) {
+  if (prompt.includes('story bible')) {
+    const n = Number(prompt.match(/exactly (\d+) page/)?.[1] ?? 1);
+    const kept = [...prompt.matchAll(/^- ([^:\n]+):/gm)].map((x) => x[1]);
+    const characters = kept.length
+      ? kept.map((name) => ({ name, description: 'as already described' }))
+      : [
+          { name: 'Claire', description: 'a woman in her thirties, chestnut bob haircut, round glasses, mustard cardigan over a white blouse, navy skirt' },
+          { name: 'Paul', description: 'a man in his forties, short grey hair, beard, blue overalls, tool belt' },
+        ];
+    return '<think>Je réfléchis {brouillon}</think>' + JSON.stringify({
+      synopsis: 'Claire, libraire, invente un admirateur pour rendre Paul jaloux. Paul mène l’enquête. Tout finit par un dîner aux chandelles.',
+      pages: Array.from({ length: n }, (_, i) => `Résumé de la page ${i + 1}`),
+      characters,
+      settings: [
+        { name: 'La librairie', description: 'a cozy old bookshop with tall wooden shelves, warm lamps, a green armchair' },
+        { name: 'La cuisine', description: 'a small kitchen with yellow tiles and a round table' },
+      ],
+    });
+  }
   const m = prompt.match(/exactly (\d+) comic page/);
   if (!m) return 'A young woman in her twenties with short copper-red hair, green eyes, freckles, slim build, wearing a dark green leather jacket over a white t-shirt, blue jeans and red sneakers.';
-  const names = [...prompt.matchAll(/^- ([^:\n]+):/gm)].map((x) => x[1]).filter((n) => !n.startsWith('('));
+  const cast = prompt.split('Characters (use these exact names):')[1]?.split(/\n(?:Settings|Story)/)[0] ?? '';
+  const names = [...cast.matchAll(/^- ([^:\n]+):/gm)].map((x) => x[1]).filter((n) => !n.startsWith('('));
+  const places = prompt.split('Settings (use these exact names):')[1]?.split('\nStory')[0] ?? '';
+  const setting = [...places.matchAll(/^- ([^:\n]+):/gm)].map((x) => x[1])[0];
   const who = names[0] ?? 'Héroïne';
+  const other = names[1];
   const pages = Array.from({ length: Number(m[1]) }, (_, p) => ({
     panels: [
-      { description: `Page ${p + 1}: wide shot of a rainy harbor at dusk`, characters: [who], shot: 'wide', dialogues: [], caption: p === 0 ? 'Il pleuvait depuis trois jours.' : 'Plus tard…' },
-      { description: `${who} looks at a mysterious letter`, characters: [who], shot: 'close-up', dialogues: [{ speaker: who, text: 'Qui a bien pu m’écrire ?' }], caption: '' },
-      { description: `${who} runs along the docks`, characters: [who], shot: 'low angle', dialogues: [{ speaker: who, text: 'Je dois y aller, vite !' }], caption: '' },
+      { description: `Page ${p + 1}: wide shot of a rainy harbor at dusk`, characters: [who], ...(setting ? { setting } : {}), shot: 'wide', dialogues: [], caption: p === 0 ? 'Il pleuvait depuis trois jours.' : 'Plus tard…' },
+      { description: `${who} looks at a mysterious letter`, characters: [who], ...(setting ? { setting } : {}), shot: 'close-up', dialogues: [{ speaker: who, text: 'Qui a bien pu m’écrire ?' }], caption: '' },
+      { description: `${who} runs along the docks`, characters: other ? [who, other] : [who], shot: 'low angle', dialogues: [{ speaker: who, text: 'Je dois y aller, vite !' }], caption: '' },
     ],
   }));
   return 'Voici le découpage :\n```json\n' + JSON.stringify({ pages }) + '\n```';
@@ -182,7 +205,8 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     const text = textOf(prompt);
     const slow = text.includes('#slow');
     const oom = text.includes('#oom');
-    const save = Object.entries(prompt).find(([, n]) => n.class_type === 'SaveVideo' || n.class_type === 'SaveImage');
+    const saves = Object.entries(prompt).filter(([, n]) => n.class_type === 'SaveVideo' || n.class_type === 'SaveImage');
+    const save = saves[0];
     const image = save?.[1].class_type === 'SaveImage';
     const llm = Object.values(prompt).find((n) => n.class_type === 'TextGenerate');
     const samplers = Object.entries(prompt).filter(([, n]) => /Sampler/.test(n.class_type) && !/Select/.test(n.class_type)).map(([k]) => k);
@@ -225,13 +249,14 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       st.outputCount++;
       const outputs = {};
       let out = null;
-      if (save) {
-        const prefix = String(save[1].inputs.filename_prefix ?? 'videogen/out');
+      for (const sv of saves) {
+        const prefix = String(sv[1].inputs.filename_prefix ?? 'videogen/out');
         const [sub, base] = prefix.includes('/') ? [prefix.split('/')[0], prefix.split('/').slice(1).join('/')] : ['', prefix];
         const filename = image ? `${base}_${String(st.outputCount).padStart(5, '0')}_.png` : `${base}_${String(st.outputCount).padStart(5, '0')}_${fixture}.mp4`;
-        out = image ? { images: [{ filename, subfolder: sub, type: 'output' }] } : { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
+        const o = image ? { images: [{ filename, subfolder: sub, type: 'output' }] } : { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
+        out ??= o;
         st.outputs.push({ filename, subfolder: sub });
-        outputs[save[0]] = out;
+        outputs[sv[0]] = o;
       }
       // Nœud PreviewAny : prompt réellement utilisé (templates LTX) ou texte généré (Qwen 3.5).
       const preview = Object.entries(prompt).find(([, n]) => n.class_type === 'PreviewAny');
@@ -316,8 +341,12 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       if (invalid) return send(res, 400, invalid);
       const id = crypto.randomUUID();
       const job = { id, clientId: body.client_id, prompt: body.prompt };
+      // Une seule tâche à la fois, comme ComfyUI : la suivante attend dans la file.
       if (st.running) st.pending.push(job);
-      else setTimeout(() => execute(job), T(30));
+      else {
+        st.running = job;
+        setTimeout(() => execute(job), T(30));
+      }
       return send(res, 200, { prompt_id: id, number: st.prompts.length, node_errors: {} });
     }
     let m;

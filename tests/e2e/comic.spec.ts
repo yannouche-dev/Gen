@@ -60,17 +60,23 @@ test('Studio BD : personnage, découpage IA, cases avec références, export, pe
   await expect(page.getByTestId('panel-desc-2')).toHaveValue(/Léa looks at a mysterious letter/);
   await expect(page.locator('[data-testid^="handle-"]')).toHaveCount(3); // récitatif + 2 répliques
 
-  // Génération de la page 1 : chaque case reçoit l'image de Léa comme référence
+  // Génération de la page 1 : UN travail dans la file de l'instance, chaque case reçoit l'image de Léa
   await page.getByTestId('gen-page').click();
   for (const i of [1, 2, 3]) await expect(page.getByTestId(`panel-status-${i}`)).toContainText('Image prête', { timeout: 90_000 });
   st = await mockState();
-  const panel = st.comfy!.lastPrompts.at(-1)!;
-  const refs = Object.entries(panel).filter(([, n]) => n.class_type === 'ReferenceLatent').map(([k]) => k);
-  expect(refs).toEqual(['vg-ref1:ref']);
-  const prompt = Object.values(panel).find((n) => n.class_type === 'CLIPTextEncode')!.inputs.text as string;
-  expect(prompt).toContain('manga');
-  expect(prompt).toContain('Léa is the character shown in reference image 1');
-  const latent = Object.values(panel).find((n) => n.class_type === 'EmptyFlux2LatentImage')!.inputs;
+  const job = st.comfy!.lastPrompts.at(-1)!;
+  const refs = Object.entries(job).filter(([, n]) => n.class_type === 'ReferenceLatent').map(([k]) => k);
+  expect(refs).toHaveLength(3);
+  expect(refs.every((k) => /^p-.+:vg-ref1:ref$/.test(k))).toBe(true);
+  expect(Object.values(job).filter((n) => n.class_type === 'LoadImage')).toHaveLength(1); // photo envoyée une fois
+  expect(Object.values(job).filter((n) => n.class_type === 'UNETLoader')).toHaveLength(1);
+  const texts = Object.values(job).filter((n) => n.class_type === 'CLIPTextEncode').map((n) => n.inputs.text as string);
+  expect(texts).toHaveLength(3);
+  for (const t of texts) {
+    expect(t).toContain('manga');
+    expect(t).toContain('Léa is the character shown in reference image 1');
+  }
+  const latent = Object.values(job).find((n) => n.class_type === 'EmptyFlux2LatentImage')!.inputs;
   expect((latent.width as number) % 16).toBe(0);
   expect(st.comfy!.views.filter((v) => v.endsWith('.png'))).toHaveLength(3);
 
@@ -157,4 +163,61 @@ test('Studio BD : case récupérée après fermeture de l’onglet pendant la g�
   await page.getByTestId('step-pages').click();
   await expect(page.getByTestId('panel-status-1')).toContainText('Image prête');
   await expect(page.getByTestId('panel-status-2')).toContainText('Pas encore générée');
+});
+
+test('BD express : un titre → histoire, personnages, décors et pages, tout en file ; reprise après fermeture', async ({ page }) => {
+  await enterKeys(page);
+  await page.locator('details', { hasText: 'Réglages de location' }).locator('summary').click();
+  await page.getByTestId('family-ltx25').uncheck();
+  await page.getByTestId('family-flux2dev').check();
+  await page.getByTestId('family-qwen35').check();
+  await rentAndWaitReady(page);
+  await page.getByTestId('tab-comic').click();
+  page.once('dialog', (d) => d.accept('Libraire'));
+  await page.getByTestId('new-project').click();
+  await page.getByTestId('step-story').click();
+  await page.getByTestId('express-title').fill('La libraire veut rendre son mari jaloux');
+  await page.getByTestId('express-pages').selectOption('2');
+  await page.getByTestId('express-tone').selectOption('vaudeville');
+  await page.getByTestId('express-go').click();
+
+  // Tous les travaux d'images sont dans la file avant la fin du premier : on ferme l'onglet.
+  await expect(page.locator('.toast', { hasText: 'en file sur l’instance' })).toBeVisible({ timeout: 60_000 });
+  const pendingCount = () => page.evaluate(() => JSON.parse(localStorage.getItem('videogen.pending.v1') || '[]').length as number);
+  let st = await mockState();
+  const qwen = st.comfy!.lastPrompts.filter((pr) => Object.values(pr).some((n) => n.class_type === 'TextGenerate'));
+  expect(qwen).toHaveLength(2); // bible puis découpage
+  const bible = Object.values(qwen[0]).find((n) => n.class_type === 'TextGenerate')!.inputs.prompt as string;
+  expect(bible).toContain('La libraire veut rendre son mari jaloux');
+  expect(bible).toContain('Tone: vaudeville');
+  await page.reload();
+  await page.fill('#unlock-pass', PASS);
+  await page.getByTestId('unlock').click();
+  await page.getByTestId('tab-comic').click();
+  await expect.poll(pendingCount, { timeout: 60_000 }).toBe(0);
+
+  st = await mockState();
+  const images = st.comfy!.lastPrompts.filter((pr) => Object.values(pr).some((n) => n.class_type === 'SaveImage'));
+  expect(images).toHaveLength(3); // planches + 2 pages
+  const saves = (pr: Record<string, { class_type: string; inputs: Record<string, unknown> }>) => Object.values(pr).filter((n) => n.class_type === 'SaveImage').map((n) => String(n.inputs.filename_prefix).split('_').pop());
+  expect(saves(images[0]).sort()).toEqual(expect.arrayContaining([expect.stringMatching(/^k-/), expect.stringMatching(/^s-/)]));
+  expect(saves(images[0])).toHaveLength(4); // Claire, Paul, 2 décors
+  expect(saves(images[1]).every((k) => k!.startsWith('p-'))).toBe(true);
+  // Dans une page, la planche de Claire est recalculée dans le graphe (cache ComfyUI) et sert de référence.
+  expect(Object.keys(images[1]).some((k) => k.startsWith('k-') && images[1][k].class_type === 'SamplerCustomAdvanced')).toBe(true);
+  expect(Object.values(images[1]).filter((n) => n.class_type === 'UNETLoader')).toHaveLength(1);
+
+  // Tout est rangé dans le projet chiffré.
+  await page.getByTestId('step-pages').click();
+  for (const i of [1, 2, 3]) await expect(page.getByTestId(`panel-status-${i}`)).toContainText('Image prête', { timeout: 30_000 });
+  await expect(page.getByTestId('panel-setting-1')).toHaveValue(/^s/);
+  await page.getByTestId('page-tab-2').click();
+  for (const i of [1, 2, 3]) await expect(page.getByTestId(`panel-status-${i}`)).toContainText('Image prête');
+  await page.getByTestId('step-chars').click();
+  await expect(page.locator('[data-testid^="char-name-"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid^="char-k"] .thumb-box img')).toHaveCount(2);
+  await page.getByTestId('step-sets').click();
+  await expect(page.locator('[data-testid^="set-name-"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid^="set-s"] .thumb-box img')).toHaveCount(2);
+  await expect(page.getByTestId('project-select').locator('option', { hasText: 'La libraire veut rendre son mari jaloux' })).toHaveCount(1);
 });

@@ -212,7 +212,12 @@ Avec la famille de test : modèle **Wan 2.1 1.3B · Texte → vidéo (test)**, 4
    - image de début et/ou de fin.
 
    **Préréglages** : *Enregistrer* garde les réglages du formulaire, sans les images, dans ce navigateur.
-4. **Annuler** interrompt la génération en cours sur le serveur.
+4. **File d'attente (GPU au maximum)** : *Générer* envoie la vidéo, et toutes ses variantes, **immédiatement** dans la
+   file de ComfyUI sur l'instance. Pendant qu'elle tourne, tu peux écrire un autre prompt et appuyer sur
+   **Ajouter à la file** : le GPU enchaîne les vidéos sans aucun temps mort, même téléphone verrouillé.
+   La file s'affiche sous la génération en cours (position de chaque vidéo, ✕ pour en retirer une, *Vider la file*).
+   Chaque vidéo arrive dans la Galerie dès qu'elle est prête (16 vidéos en attente au plus).
+   **Annuler** interrompt la génération en cours sur le serveur.
 5. **Galerie** :
    - miniatures, réglages et seed de chaque vidéo ;
    - **Rejouer** (mêmes réglages et même seed), **Prolonger**, **Télécharger**, **Supprimer** ;
@@ -247,7 +252,7 @@ images par seconde, résolutions, son, images de début, intermédiaire et de fi
   - **Force des images clés** (modèle « Images clés »).
 - **Image clé intermédiaire** (LTX-2.5 · Images clés) : en plus des images de début et de fin, une image placée à
   l'instant de ton choix. Elle est insérée dans la chaîne officielle de guides `LTXVAddGuide`.
-- **Nombre de vidéos** : jusqu'à 4 variantes à la suite. La seed est aléatoire pour chacune, ou seed fixe, +1, +2…
+- **Nombre de vidéos** : jusqu'à 8 variantes, toutes envoyées d'un coup dans la file. La seed est aléatoire pour chacune, ou seed fixe, +1, +2…
 - Toutes ces options sont enregistrées dans les **préréglages**.
 
 **Prolonger une vidéo** : la dernière image est extraite dans le navigateur, avec `<video>` + canvas, et ffmpeg.wasm en
@@ -270,6 +275,26 @@ Ajoute LTX-2.5 si tu veux aussi faire de la vidéo sur la même instance. Le dis
 (150 Go pour les deux familles BD seules). Prends de préférence un GPU de **48 Go ou plus** (RTX PRO 6000) : sur 32 Go
 (RTX 5090), ComfyUI décharge une partie du modèle en mémoire système, ce qui marche mais plus lentement.
 
+**BD express : un titre suffit** (étape *Histoire*). Exemple : « La libraire veut rendre son mari jaloux », 3 pages,
+ton *Vaudeville*, puis **Créer la BD**. Tout s'enchaîne :
+
+1. Qwen 3.5 écrit la **bible** de l'histoire : synopsis, résumé de chaque page (début, rebondissement, chute),
+   personnages avec leur description physique, décors récurrents. Tes personnages existants restent les héros.
+2. Qwen 3.5 **découpe** chaque page en cases en suivant ce plan, avec des règles de continuité : mêmes tenues,
+   même heure du jour dans une scène, chaque case suit la précédente. Il écrit aussi les dialogues en français.
+3. Les dessins partent **tous d'un coup dans la file de l'instance** :
+   - un travail « Planches » : la planche de poses de chaque personnage sans photo et l'image de chaque décor ;
+   - puis **un travail par page** : toutes ses cases, avec les planches et décors branchés comme références.
+
+   Tu peux verrouiller le téléphone : le GPU enchaîne tout, et les images se rangent dans le projet au réveil.
+
+Les planches et décors dessinés deviennent les références des personnages et des décors. Ils servent ensuite à
+chaque case régénérée : **mêmes visages, mêmes lieux, même style** sur toute la BD.
+
+**Contenu :** romance, séduction, jalousie et sous-entendus, oui. L'IA d'écriture reçoit la consigne de ne pas aller
+jusqu'à la nudité ou au contenu sexuel explicite. Le Studio BD ne propose pas de mode explicite, puisqu'il sait
+reproduire un visage à partir d'une photo.
+
 **Étapes (dans l'onglet BD) :**
 
 1. **Projet** : *Nouveau*. Tes projets sont rangés **dans le téléphone** (IndexedDB), **chiffrés** en AES-GCM avec
@@ -280,23 +305,35 @@ Ajoute LTX-2.5 si tu veux aussi faire de la vidéo sur la même instance. Le dis
      couleurs…). Tu peux la corriger.
    - **Planche de poses** : FLUX.2 dessine le personnage de face, de trois quarts, de profil et de dos. La planche
      est ajoutée à ses références, ce qui renforce la cohérence.
+   - **Sans photo** : *Dessiner d'après la description*. Le dessin obtenu devient la référence du personnage.
+   **Décors** : les lieux qui reviennent (nom, description, photo ou *Dessiner le décor*). Leur image est envoyée
+   comme référence pour chaque case qui s'y passe.
 3. **Style** : franco-belge, manga, comics, webtoon, aquarelle, polar, cartoon, réaliste, plus tes précisions.
    - **Image de style** (facultative) : une case d'un album dont tu veux le trait et les couleurs, mais pas le contenu.
    - **Rapide** : FLUX.2 Turbo, 8 étapes. Décoche-le pour la version finale (20 étapes).
 4. **Histoire** : écris le synopsis, choisis 1 à 8 pages, puis **Découper avec l'IA**. Qwen 3.5 propose les pages
    et les cases (3 à 6 par page), le cadrage, les personnages présents, les **dialogues et récitatifs en français**.
 5. **Pages** : aperçu de la planche, mise en page (8 gabarits, de la pleine page au gaufrier de 6), et pour
-   chaque case : description, personnages présents, cadrage et bulles (réplique, pensée, récitatif).
-   - **Générer les cases vides** dessine toute la page ; **Régénérer** refait une case avec une nouvelle seed.
+   chaque case : description, personnages présents, décor, cadrage et bulles (réplique, pensée, récitatif).
+   - **Générer les cases vides** envoie toute la page en **un seul travail** dans la file de l'instance ;
+     **Générer toutes les pages** fait de même pour toute la BD ; **Régénérer** refait une case avec une nouvelle seed.
    - Chaque case est générée **au format exact de son emplacement** (≈ 1 mégapixel).
    - Les bulles se déplacent au doigt avec la poignée ✥.
 6. **Export** : **PDF A4**, **CBZ** (liseuses de BD, avec `ComicInfo.xml`) ou **PNG** page par page. Les fichiers
    sont fabriqués dans le téléphone.
 
-**Comment la cohérence est obtenue.** Pour chaque case, les images de référence des personnages présents sont
-envoyées à FLUX.2 Dev par sa chaîne officielle `ReferenceLatent`. Les références sont prises dans cet ordre : la 1ʳᵉ
-image de chaque personnage, puis ses autres images (planche de poses…), puis l'image de style. Le prompt relie chaque
-nom à ses références (« Léa is the character shown in reference images 1 and 3… ») et rappelle sa description.
+**Comment la cohérence est obtenue.** Pour chaque case, les images de référence des personnages présents, et du
+décor, sont envoyées à FLUX.2 Dev par sa chaîne officielle `ReferenceLatent` (4 au plus). Ordre de priorité :
+
+1. la 1ʳᵉ image de chaque personnage ;
+2. l'image du décor ;
+3. les autres images des personnages (planche de poses…) ;
+4. l'image de style.
+
+Le prompt relie chaque nom à ses références (« Léa is the character shown in reference images 1 and 3… »), rappelle
+sa description, et demande de garder les murs, meubles et couleurs du décor. Les seeds dérivent d'une seed de projet :
+une planche dessinée dans le graphe d'une page est identique à celle du travail « Planches », et ComfyUI la reprend
+de son cache au lieu de la recalculer.
 
 **Le texte n'est jamais dessiné par le modèle.** Les bulles sont tracées par le navigateur avec la police libre
 Comic Neue (OFL), servie par le site. Les accents sont donc exacts, et une faute se corrige sans régénérer l'image.
@@ -462,9 +499,11 @@ Les tests de bout en bout couvrent :
 - Journal : aucun secret en clair ;
 - instance : arrêt, redémarrage, destruction, reprise d'une instance arrêtée ;
 - rappel avant de fermer l'onglet ;
-- Studio BD : projet chiffré, personnage décrit par l'IA, découpage, cases avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque.
+- file d'attente vidéo : variantes envoyées d'un coup, ajout pendant le calcul, retrait d'une vidéo de la file ;
+- Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
+- BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet.
 
-Validation des requêtes BD (0 à 4 références sur les 8 gabarits, Qwen avec et sans image) contre un vrai ComfyUI :
+Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, travaux fusionnés de la BD express sur les 8 gabarits) contre un vrai ComfyUI :
 `COMFY=http://127.0.0.1:8188 node tools/validate-comic.mjs`.
 
 ## 12. Ce qui a été vérifié, ce qui ne l'a pas été
@@ -473,7 +512,7 @@ Validation des requêtes BD (0 à 4 références sur les 8 gabarits, Qwen avec e
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
 - **Workflows** : les 10 workflows et 92 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
-- **Studio BD** : les 18 requêtes types (FLUX.2 Dev avec 0 à 4 références, Qwen 3.5 avec et sans image) sont acceptées par ComfyUI v0.44.2 ; le PDF et le CBZ produits sont relus par des outils standards.
+- **Studio BD** : les 28 requêtes types sont acceptées par ComfyUI v0.44.2 : FLUX.2 Dev avec 0 à 4 références, Qwen 3.5 avec et sans image, bible, et travaux fusionnés de la BD express sur les 8 mises en page. Le PDF et le CBZ produits sont relus par des outils standards.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).
 - **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, testés contre de faux serveurs.

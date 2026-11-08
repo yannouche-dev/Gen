@@ -1,7 +1,7 @@
 // Projets de BD conservés DANS LE TÉLÉPHONE (IndexedDB), chiffrés en AES-GCM avec une clé aléatoire de 256 bits
 // gardée dans le coffre (elle-même chiffrée par ta phrase de passe). Rien n'est envoyé ailleurs.
 import { vault } from '../core/vault.ts';
-import type { Project } from './model.ts';
+import { normalizeProject, type Project } from './model.ts';
 
 const DB_NAME = 'videogen-bd';
 const enc = new TextEncoder();
@@ -85,7 +85,7 @@ export async function listProjects(): Promise<Project[]> {
   const out: Project[] = [];
   for (const r of rows) {
     try {
-      out.push(JSON.parse(dec.decode(await open(r))) as Project);
+      out.push(normalizeProject(JSON.parse(dec.decode(await open(r))) as Project));
     } catch {
       /* chiffré avec une autre clé (coffre recréé) : ignoré */
     }

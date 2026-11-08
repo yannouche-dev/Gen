@@ -5,7 +5,7 @@ import { app, type Prefill } from './context.ts';
 import { journal } from '../core/journal.ts';
 import { loadPresets, savePresets, type GenPreset } from '../core/settings.ts';
 import { computeSize, frameCount, randomSeed, readInput, supportedOptions, MAX_SEED, type ModelDef } from '../workflows/build.ts';
-import { Generation, GenerationError, type GenEvents } from '../comfy/generate.ts';
+import { Generation, GenerationError, type GenEvents, type GenResult } from '../comfy/generate.ts';
 import { listPending, removePending } from '../core/pending.ts';
 import { holdAwake, releaseAwake } from '../core/wakelock.ts';
 import { explainError } from '../comfy/errors.ts';
@@ -39,6 +39,35 @@ interface FormState {
   parentId?: string;
 }
 
+const MAX_VARIANTS = 8;
+/** Vidéos en attente ou en cours au plus (la file de ComfyUI n'a pas de limite, la mémoire du téléphone si). */
+const MAX_QUEUE = 16;
+
+interface FollowCtx {
+  model: ModelDef;
+  params: GalleryItem['params'];
+  startImage: Blob | null;
+  endImage: Blob | null;
+  middleImage?: Blob | null;
+  parentId?: string;
+  startedAt: number;
+  label?: string;
+}
+
+interface QItem {
+  gen: Generation;
+  ctx: FollowCtx;
+  status: string;
+  progress: number;
+  step: string;
+  previewUrl: string | null;
+  finished: boolean;
+  /** Calcul en cours sur le GPU (sinon en attente). */
+  running: boolean;
+  /** Position dans la file d'attente de ComfyUI (0 si inconnue ou en cours). */
+  position: number;
+}
+
 export class GenerateScreen {
   el = h('div', { class: 'screen' });
   private form = h('form', { class: 'card', 'data-testid': 'gen-form' });
@@ -46,8 +75,12 @@ export class GenerateScreen {
   private resultBox = h('section', { class: 'card hidden', 'data-testid': 'gen-result' });
   private notice = h('div');
   private st: FormState | null = null;
-  private gen: Generation | null = null;
-  private previewUrl: string | null = null;
+  private queue: QItem[] = [];
+  private queueTimer: ReturnType<typeof setInterval> | null = null;
+  private tick: ReturnType<typeof setInterval> | null = null;
+  private focusId: QItem | null = null;
+  private focusEls: { status: HTMLElement; bar: HTMLProgressElement; step: HTMLElement; img: HTMLImageElement; timer: HTMLElement } | null = null;
+  private submitBtn: HTMLButtonElement | null = null;
   private resuming = false;
   private assistantOpen = false;
   private imageUrls: string[] = [];
@@ -304,9 +337,10 @@ export class GenerateScreen {
       this.renderForm();
     });
 
-    const busy = !!this.gen;
+    const queued = this.queue.filter((q) => !q.finished).length;
     const ready = app.manager.state.phase === 'ready' && !!app.manager.comfy;
-    const submit = h('button', { type: 'submit', class: 'btn btn-primary btn-big', disabled: busy || !ready || (av && !av.ok), 'data-testid': 'generate' }, busy ? 'Génération en cours…' : 'Générer');
+    const submit = h('button', { type: 'submit', class: 'btn btn-primary btn-big', disabled: !ready || (av && !av.ok), 'data-testid': 'generate' }, queued ? `Ajouter à la file (${queued} en cours)` : 'Générer') as HTMLButtonElement;
+    this.submitBtn = submit;
 
     // Capacités du modèle choisi, d'après models.json
     const caps: string[] = [`${m.duration.min}–${m.duration.max} s`, m.fps.options.length > 1 ? `${m.fps.options[0]}–${m.fps.options.at(-1)} i/s` : `${m.fps.options[0]} i/s`, m.resolution.presets.join(' · ')];
@@ -386,7 +420,7 @@ export class GenerateScreen {
 
     // Variantes : plusieurs générations à la suite avec des seeds différentes
     const variants = h('select', { class: 'input', id: 'variants', 'data-testid': 'variants' }) as HTMLSelectElement;
-    for (const n of [1, 2, 3, 4]) variants.append(h('option', { value: n, selected: n === st.variants }, n === 1 ? '1 vidéo' : `${n} variantes (seeds différentes)`));
+    for (const n of [1, 2, 3, 4, 6, 8]) variants.append(h('option', { value: n, selected: n === st.variants }, n === 1 ? '1 vidéo' : `${n} variantes (seeds différentes)`));
     variants.addEventListener('change', () => (st.variants = Number(variants.value)));
 
     replace(
@@ -408,7 +442,7 @@ export class GenerateScreen {
       fpsField,
       modelOptions,
       h('details', { class: 'advanced', open: false }, h('summary', null, 'Options avancées'), ...adv),
-      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nombre de vidéos'), variants),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nombre de vidéos'), variants, h('small', { class: 'hint' }, 'Toutes partent dans la file de l’instance : le GPU les enchaîne sans pause, même téléphone verrouillé. Tu peux en ajouter pendant que ça tourne.')),
       submit,
     );
     this.form.onsubmit = (e) => {
@@ -426,10 +460,15 @@ export class GenerateScreen {
     if (!st.prompt.trim()) return toast('Écris un prompt', 'error');
     if (m.params.startImage?.required && !st.startImage) return toast('Ajoute une image de début', 'error');
     if (m.params.endImage?.required && !st.endImage) return toast('Ajoute une image de fin', 'error');
+    const total = Math.max(1, Math.min(MAX_VARIANTS, st.variants));
+    const active = this.queue.filter((q) => !q.finished).length;
+    if (active + total > MAX_QUEUE) return toast(`File pleine (${MAX_QUEUE} vidéos au plus) : attends la fin de quelques vidéos`, 'error');
     const parentId = st.parentId;
     st.parentId = undefined;
-    const total = Math.max(1, Math.min(4, st.variants));
     const baseSeed = st.seed;
+    const short = st.prompt.trim().slice(0, 40) + (st.prompt.trim().length > 40 ? '…' : '');
+    // Toutes les vidéos partent tout de suite dans la file de ComfyUI : le GPU les enchaîne sans temps mort,
+    // même si le téléphone se met en veille.
     for (let i = 0; i < total; i++) {
       // Variantes : nouvelle seed aléatoire, ou seed fixe + i pour des variantes reproductibles.
       const seed = st.randomSeed ? randomSeed() : baseSeed + i;
@@ -449,7 +488,8 @@ export class GenerateScreen {
         extras: { ...st.extras },
         middleAt: st.middleImage ? st.middleAt : undefined,
       };
-      const outcome = await this.follow(
+      const pid = i === 0 ? parentId : undefined;
+      this.enqueue(
         (events) =>
           new Generation({
             client: c,
@@ -462,24 +502,25 @@ export class GenerateScreen {
             middleImage: st.middleImage,
             stallMinutes: app.settings.stallMinutes,
             instanceId: inst.id,
-            parentId: i === 0 ? parentId : undefined,
+            parentId: pid,
             events,
           }),
-        { model: m, params, startImage: st.startImage, endImage: st.endImage, middleImage: st.middleImage, parentId: i === 0 ? parentId : undefined, startedAt: Date.now(), label: total > 1 ? `Variante ${i + 1}/${total}` : '' },
+        { model: m, params, startImage: st.startImage, endImage: st.endImage, middleImage: st.middleImage, parentId: pid, startedAt: Date.now(), label: `${total > 1 ? `Variante ${i + 1}/${total} · ` : ''}${m.label} · « ${short} » · seed ${seed}` },
       );
-      if (outcome !== 'ok') break;
     }
+    if (active > 0) toast(total > 1 ? `${total} vidéos ajoutées à la file` : 'Vidéo ajoutée à la file', 'info');
   }
 
   /** Reprend les générations lancées avant une mise en veille ou une fermeture de l'onglet. */
   async resumePending(): Promise<void> {
     const c = app.manager.comfy;
     const inst = app.manager.state.instance;
-    const jobs = listPending().filter((j) => !j.meta?.comic);
+    const jobs = listPending().filter((j) => !j.meta?.comic && !this.queue.some((q) => q.gen.id === j.promptId));
     if (!jobs.length) return;
-    if (!c || !inst || !app.registry || this.gen || this.resuming) return;
+    if (!c || !inst || !app.registry || this.resuming) return;
     this.resuming = true;
     try {
+      let n = 0;
       for (const job of jobs) {
         const m = app.model(job.modelId);
         const known = app.manager.state.all.some((i) => i.id === job.instanceId) || inst.id === job.instanceId;
@@ -489,8 +530,8 @@ export class GenerateScreen {
           continue;
         }
         if (job.instanceId !== inst.id) continue;
-        toast('Reprise d’une génération en cours…', 'info');
-        await this.follow((events) => new Generation({
+        n++;
+        this.enqueue((events) => new Generation({
           client: c,
           registry: app.registry!,
           model: m,
@@ -501,56 +542,98 @@ export class GenerateScreen {
           parentId: job.parentId,
           resume: job,
           events,
-        }), { model: m, params: job.params, startImage: null, endImage: null, parentId: job.parentId, startedAt: job.startedAt });
+        }), { model: m, params: job.params, startImage: null, endImage: null, parentId: job.parentId, startedAt: job.startedAt, label: `${m.label} · « ${job.params.prompt.slice(0, 40)} » · seed ${job.params.seed} (reprise)` });
       }
+      if (n) toast(n > 1 ? `Reprise de ${n} générations en cours…` : 'Reprise d’une génération en cours…', 'info');
     } finally {
       this.resuming = false;
     }
   }
 
-  /** Affiche la progression d'une génération (nouvelle ou reprise) puis range le résultat dans la galerie. */
-  private async follow(
-    make: (events: GenEvents) => Generation,
-    ctx: { model: ModelDef; params: GalleryItem['params']; startImage: Blob | null; endImage: Blob | null; middleImage?: Blob | null; parentId?: string; startedAt: number; label?: string },
-  ): Promise<'ok' | 'cancelled' | 'error'> {
-    const statusEl = h('p', { class: 'gen-status', 'data-testid': 'gen-status' }, 'Préparation…');
-    const bar = h('progress', { max: 1, value: 0, 'data-testid': 'gen-bar' }) as HTMLProgressElement;
-    const stepEl = h('p', { class: 'hint' });
-    const img = h('img', { class: 'gen-preview hidden', alt: 'Aperçu' }) as HTMLImageElement;
-    const timer = h('span', { class: 'hint' });
-    const note = h('p', { class: 'hint' }, 'La génération tourne sur l’instance : tu peux verrouiller le téléphone, le suivi reprendra au réveil.');
-    const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-big', 'data-testid': 'cancel' }, 'Annuler');
-    replace(this.progressBox, h('h2', null, ctx.label ? `Génération · ${ctx.label}` : 'Génération'), statusEl, bar, stepEl, timer, img, note, cancel);
-    this.progressBox.classList.remove('hidden');
-    this.resultBox.classList.add('hidden');
-    const tick = setInterval(() => (timer.textContent = `Écoulé : ${fmtDuration(Date.now() - ctx.startedAt)}`), 1000);
-    holdAwake('génération');
-
-    const gen = make({
-      onStatus: (t) => (statusEl.textContent = t),
-      onProgress: (p) => {
-        bar.value = p.overall;
-        stepEl.textContent = `${Math.round(p.overall * 100)} % · ${p.label}${p.max ? ` (${p.value}/${p.max})` : ''}`;
+  /** Ajoute une génération (nouvelle ou reprise) à la file affichée ; le résultat ira dans la galerie. */
+  private enqueue(make: (events: GenEvents) => Generation, ctx: FollowCtx): void {
+    const item = { ctx, status: 'Préparation…', progress: 0, step: '', previewUrl: null, finished: false, running: false, position: 0 } as unknown as QItem;
+    const events: GenEvents = {
+      onStatus: (t) => {
+        item.status = t;
+        if (/en cours/i.test(t) && !/file/i.test(t)) item.running = true;
+        this.updateQueue(item);
+      },
+      onProgress: (pr) => {
+        item.running = true;
+        item.progress = pr.overall;
+        item.step = `${Math.round(pr.overall * 100)} % · ${pr.label}${pr.max ? ` (${pr.value}/${pr.max})` : ''}`;
+        this.updateQueue(item);
       },
       onPreview: (b) => {
-        if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
-        this.previewUrl = URL.createObjectURL(b);
-        img.src = this.previewUrl;
-        img.classList.remove('hidden');
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        item.previewUrl = URL.createObjectURL(b);
+        this.updateQueue(item);
       },
-    });
-    this.gen = gen;
-    cancel.addEventListener('click', async () => {
-      if (await confirmDialog({ title: 'Annuler la génération ?', ok: 'Annuler la génération', cancel: 'Continuer', danger: true })) void gen.cancel();
-    });
-    this.renderForm();
+    };
+    item.gen = make(events);
+    if (!this.active().length) this.resultBox.classList.add('hidden');
+    this.queue.push(item);
+    holdAwake('génération');
+    this.startQueuePoll();
+    this.renderQueue();
+    item.gen.promise.then(
+      (r) => void this.onDone(item, r),
+      (e) => this.onFail(item, e),
+    );
+  }
+
+  private active(): QItem[] {
+    return this.queue.filter((q) => !q.finished);
+  }
+
+  /** Élément suivi en détail : celui qui tourne sur le GPU, sinon le premier de la file. */
+  private focus(): QItem | undefined {
+    const a = this.active();
+    return a.find((q) => q.running) ?? a[0];
+  }
+
+  /** Positions dans la file de ComfyUI (interrogée toutes les 5 s tant que la file n'est pas vide). */
+  private startQueuePoll() {
+    if (this.queueTimer) return;
+    const poll = async () => {
+      const c = app.manager.comfy;
+      if (!this.active().length) {
+        clearInterval(this.queueTimer!);
+        this.queueTimer = null;
+        return;
+      }
+      if (!c || document.visibilityState !== 'visible') return;
+      try {
+        const q = await c.queue();
+        const running = new Set(q.queue_running.map((e) => String(e[1])));
+        const pending = [...q.queue_pending].sort((x, y) => Number(x[0]) - Number(y[0])).map((e) => String(e[1]));
+        let changed = false;
+        for (const it of this.active()) {
+          const id = it.gen.id;
+          if (!id) continue;
+          const run = running.has(id);
+          const pos = pending.indexOf(id) + 1;
+          if (run !== it.running || pos !== it.position) changed = true;
+          it.running = run || (it.running && pos === 0);
+          it.position = pos;
+        }
+        if (changed) this.renderQueue();
+      } catch {
+        /* le suivi de chaque génération gère les coupures */
+      }
+    };
+    this.queueTimer = setInterval(() => void poll(), 5000);
+  }
+
+  private async onDone(item: QItem, r: GenResult) {
+    const { ctx } = item;
     const m = ctx.model;
     try {
-      const r = await gen.promise;
       const meta = await videoMeta(r.blob).catch(() => ({ duration: ctx.params.duration, width: 0, height: 0 }));
       const thumb = await thumbnail(r.blob);
       const size = computeSize(app.registry!, m, ctx.params.preset, ctx.params.ratio);
-      const item = app.gallery.add({
+      const g = app.gallery.add({
         kind: 'generated',
         modelId: m.id,
         modelLabel: m.label,
@@ -570,30 +653,129 @@ export class GenerateScreen {
         parentId: ctx.parentId,
         enhancedPrompt: r.enhancedPrompt,
       });
-      this.progressBox.classList.add('hidden');
-      this.showResult(item);
-      toast(ctx.label ? `${ctx.label} prête` : 'Vidéo prête', 'ok');
-      return 'ok';
+      this.finish(item);
+      this.showResult(g);
+      const left = this.active().length;
+      toast(left ? `Vidéo prête · ${left} encore dans la file` : 'Vidéo prête', 'ok');
     } catch (e) {
-      const r = e instanceof GenerationError ? e.readable : explainError(e);
-      const cancelled = e instanceof GenerationError && e.cancelled;
-      replace(
-        this.progressBox,
-        h('h2', null, cancelled ? 'Génération annulée' : 'Échec de la génération'),
-        h('p', { class: `msg ${cancelled ? 'warn' : 'err'}`, 'data-testid': 'gen-error' }, r.title),
-        r.hint ? h('p', null, r.hint) : null,
-        r.detail ? h('pre', { class: 'detail' }, r.detail) : null,
-        h('button', { type: 'button', class: 'btn', on: { click: () => app.navigate('journal') } }, 'Voir le Journal'),
-      );
-      return cancelled ? 'cancelled' : 'error';
-    } finally {
-      clearInterval(tick);
-      releaseAwake('génération');
-      this.gen = null;
-      if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
-      this.previewUrl = null;
-      this.renderForm();
+      this.onFail(item, e);
     }
+  }
+
+  private onFail(item: QItem, e: unknown) {
+    if (item.finished) return;
+    const r = e instanceof GenerationError ? e.readable : explainError(e);
+    const cancelled = e instanceof GenerationError && e.cancelled;
+    this.finish(item);
+    if (this.active().length) {
+      toast(`${cancelled ? 'Annulée' : 'Échec'} : ${r.title}`, cancelled ? 'info' : 'error');
+      return;
+    }
+    replace(
+      this.progressBox,
+      h('h2', null, cancelled ? 'Génération annulée' : 'Échec de la génération'),
+      h('p', { class: `msg ${cancelled ? 'warn' : 'err'}`, 'data-testid': 'gen-error' }, r.title),
+      r.hint ? h('p', null, r.hint) : null,
+      r.detail ? h('pre', { class: 'detail' }, r.detail) : null,
+      h('button', { type: 'button', class: 'btn', on: { click: () => app.navigate('journal') } }, 'Voir le Journal'),
+    );
+    this.progressBox.classList.remove('hidden');
+  }
+
+  private finish(item: QItem) {
+    item.finished = true;
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    item.previewUrl = null;
+    this.queue = this.queue.filter((q) => q !== item);
+    if (!this.active().length) {
+      releaseAwake('génération');
+      if (this.tick) clearInterval(this.tick);
+      this.tick = null;
+      this.progressBox.classList.add('hidden');
+    }
+    this.renderQueue();
+  }
+
+  /** Mise à jour légère (progression) : seulement les éléments affichés de cette génération. */
+  private updateQueue(item: QItem) {
+    if (this.focus() !== item || this.focusId !== item) return this.renderQueue();
+    const f = this.focusEls;
+    if (!f) return;
+    f.status.textContent = item.status;
+    f.bar.value = item.progress;
+    f.step.textContent = item.step;
+    if (item.previewUrl) {
+      f.img.src = item.previewUrl;
+      f.img.classList.remove('hidden');
+    }
+  }
+
+  private renderQueue() {
+    this.updateSubmit();
+    const items = this.active();
+    const fo = this.focus();
+    this.focusId = fo ?? null;
+    if (!fo) {
+      this.focusEls = null;
+      return;
+    }
+    const status = h('p', { class: 'gen-status', 'data-testid': 'gen-status' }, fo.status);
+    const bar = h('progress', { max: 1, value: fo.progress, 'data-testid': 'gen-bar' }) as HTMLProgressElement;
+    const step = h('p', { class: 'hint' }, fo.step);
+    const img = h('img', { class: `gen-preview ${fo.previewUrl ? '' : 'hidden'}`, alt: 'Aperçu', src: fo.previewUrl ?? undefined }) as HTMLImageElement;
+    const timer = h('span', { class: 'hint' }, `Écoulé : ${fmtDuration(Date.now() - fo.ctx.startedAt)}`);
+    this.focusEls = { status, bar, step, img, timer };
+    if (this.tick) clearInterval(this.tick);
+    this.tick = setInterval(() => {
+      const cur = this.focusId;
+      if (cur && this.focusEls) this.focusEls.timer.textContent = `Écoulé : ${fmtDuration(Date.now() - cur.ctx.startedAt)}`;
+    }, 1000);
+    const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-big', 'data-testid': 'cancel' }, 'Annuler');
+    cancel.addEventListener('click', async () => {
+      if (await confirmDialog({ title: 'Annuler la génération ?', ok: 'Annuler la génération', cancel: 'Continuer', danger: true })) void fo.gen.cancel();
+    });
+    const others = items.filter((q) => q !== fo);
+    const list = others.length
+      ? h(
+          'div',
+          { class: 'queue', 'data-testid': 'gen-queue' },
+          h('h3', null, `File d’attente sur l’instance · ${others.length} autre(s)`),
+          ...others.map((q) =>
+            h(
+              'div',
+              { class: 'queue-item', 'data-testid': 'queue-item' },
+              h('span', { class: 'queue-pos' }, q.running ? '▶' : q.position ? `#${q.position}` : '…'),
+              h('span', { class: 'queue-label' }, q.ctx.label ?? q.ctx.model.label),
+              h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Retirer de la file', 'data-testid': 'queue-cancel', on: { click: () => void q.gen.cancel() } }, '✕'),
+            ),
+          ),
+          others.length > 1
+            ? h('button', { type: 'button', class: 'btn btn-small btn-danger', on: { click: async () => {
+                if (await confirmDialog({ title: `Vider la file (${others.length}) ?`, body: ['La génération en cours continue.'], ok: 'Vider la file', danger: true })) for (const q of others) void q.gen.cancel();
+              } } }, 'Vider la file')
+            : null,
+        )
+      : null;
+    replace(
+      this.progressBox,
+      h('h2', null, fo.ctx.label ? `Génération · ${fo.ctx.label}` : 'Génération'),
+      status,
+      bar,
+      step,
+      timer,
+      img,
+      h('p', { class: 'hint' }, 'Les vidéos tournent sur l’instance, à la suite et sans pause : tu peux verrouiller le téléphone ou ajouter d’autres vidéos à la file.'),
+      cancel,
+      list,
+    );
+    this.progressBox.classList.remove('hidden');
+  }
+
+  private updateSubmit() {
+    const b = this.submitBtn;
+    if (!b) return;
+    const n = this.active().length;
+    b.textContent = n ? `Ajouter à la file (${n} en cours)` : 'Générer';
   }
 
   showResult(item: GalleryItem): void {

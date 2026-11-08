@@ -41,6 +41,8 @@ export interface GenResult {
   enhancedPrompt: string | null;
   /** Texte produit (workflows de type « text », ex. Qwen 3.5). */
   text?: string;
+  /** Toutes les images produites (mode `multi`, ex. une page de BD complète). */
+  files?: { filename: string; blob: Blob }[];
 }
 
 export class GenerationError extends Error {
@@ -65,6 +67,8 @@ export interface GenInput {
   /** Nature du résultat : vidéo (défaut), image, ou texte lu dans un nœud PreviewAny. */
   kind?: 'video' | 'image' | 'text';
   textNode?: string;
+  /** Plusieurs images en sortie : toutes sont téléchargées (GenResult.files). */
+  multi?: boolean;
   /** Mémoriser la génération pour la reprendre après fermeture de l'onglet (défaut : oui). */
   persist?: boolean;
   /** Informations libres gardées avec la génération mémorisée (ex. projet et case de BD). */
@@ -138,6 +142,11 @@ export class Generation {
 
   get id(): string | null {
     return this.promptId;
+  }
+
+  /** Préfixe des fichiers de sortie (pour récupérer des images après un échec partiel). */
+  get prefix(): string {
+    return this.outputPrefix;
   }
 
   private status(t: string) {
@@ -391,9 +400,16 @@ export class Generation {
         return;
       }
       const q = await this.input.client.queue();
-      const inQueue = [...q.queue_running, ...q.queue_pending].some((e) => e[1] === this.promptId);
-      if (inQueue || h) {
+      const running = q.queue_running.some((e) => e[1] === this.promptId);
+      const waiting = q.queue_pending.some((e) => e[1] === this.promptId);
+      if (running || waiting || h) {
         this.missingSince = null;
+        if (waiting) {
+          // En attente derrière d'autres générations : ce n'est pas un blocage.
+          this.lastActivity = now;
+          this.status('En file d’attente sur l’instance : démarrera dès que le GPU sera libre…');
+          return;
+        }
         if (this.polling) this.status('Génération en cours sur l’instance (reprise du suivi : progression détaillée indisponible)…');
         if (idleMs > this.input.stallMinutes * 60000) this.status('Toujours en cours sur l’instance (pas de nouvelles depuis un moment)…');
         return;
@@ -460,8 +476,17 @@ export class Generation {
       this.status(this.input.kind === 'image' ? 'Téléchargement de l’image…' : 'Téléchargement de la vidéo…');
       this.input.events?.onProgress?.({ overall: 0.995, label: 'Téléchargement' });
       const file = files[files.length - 1];
-      const blob = await this.input.client.view(file);
+      const all: { filename: string; blob: Blob }[] = [];
+      if (this.input.multi) {
+        for (const [i, f] of files.entries()) {
+          this.status(`Téléchargement des images (${i + 1}/${files.length})…`);
+          const b = await this.input.client.view(f);
+          all.push({ filename: f.filename, blob: b.type ? b : new Blob([b], { type: 'image/png' }) });
+        }
+      }
+      const blob = this.input.multi ? all[all.length - 1].blob : await this.input.client.view(file);
       this.succeed({
+        files: this.input.multi ? all : undefined,
         blob: blob.type ? blob : new Blob([blob], { type: this.input.kind === 'image' ? 'image/png' : 'video/mp4' }),
         file,
         promptId: this.promptId!,
@@ -501,6 +526,12 @@ export class Generation {
     this.status('Annulation…');
     if (!this.promptId) return;
     await this.sendCancel();
+    // Encore en attente (pas sur le GPU) : retirée de la file, l'annulation est immédiate.
+    const q = await this.input.client.queue().catch(() => null);
+    if (q && !q.queue_running.some((e) => e[1] === this.promptId) && !(await this.input.client.history(this.promptId).catch(() => null))) {
+      this.fail(new GenerationError({ title: 'Génération annulée', hint: '' }, true));
+      return;
+    }
     setTimeout(() => {
       if (!this.finished) this.fail(new GenerationError({ title: 'Génération annulée', hint: '' }, true));
     }, 8000);
@@ -522,7 +553,8 @@ export class Generation {
     if (this.finished) return;
     this.cleanup();
     removePending(r.promptId);
-    journal.info('génération', `Vidéo reçue (${(r.blob.size / 1e6).toFixed(1)} Mo, ${Math.round(r.elapsedMs / 1000)} s)`);
+    const what = this.input.kind === 'text' ? 'Texte reçu' : this.input.kind === 'image' ? (r.files ? `${r.files.length} image(s) reçue(s)` : 'Image reçue') : 'Vidéo reçue';
+    journal.info('génération', `${what} (${(r.blob.size / 1e6).toFixed(1)} Mo, ${Math.round(r.elapsedMs / 1000)} s)`);
     this.resolveFn(r);
   }
   private fail(e: GenerationError) {

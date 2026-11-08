@@ -78,7 +78,7 @@ export function createVastMock({ shared, origin, speed = 1 }) {
     // --- Contrôle des tests
     if (url.pathname === '/__mock/state') {
       const c = shared.comfy?.state;
-      return send(res, 200, { instances: [...state.instances.values()], creates: state.creates, requests: state.requests, comfy: c ? { deletions: c.deletions, views: c.views, uploads: [...c.uploads], prompts: c.prompts.length, lastPrompts: c.prompts.slice(-4).map((b) => b.prompt), outputs: c.outputs, running: !!c.running } : null });
+      return send(res, 200, { instances: [...state.instances.values()], creates: state.creates, requests: state.requests, comfy: c ? { deletions: c.deletions, views: c.views, uploads: [...c.uploads], prompts: c.prompts.length, lastPrompts: c.prompts.slice(-8).map((b) => b.prompt), outputs: c.outputs, running: !!c.running } : null });
     }
     if (url.pathname === '/__mock/reset' && req.method === 'POST') {
       state.instances.clear();

@@ -21,6 +21,8 @@ export interface Panel {
   characters: string[];
   shot: string;
   bubbles: Bubble[];
+  /** Décor (identifiant) : son image de référence est envoyée au modèle. */
+  setting?: string;
   imageId?: string;
   seed?: number;
   status?: 'empty' | 'running' | 'done' | 'error';
@@ -34,6 +36,14 @@ export interface Page {
 }
 
 export interface Character {
+  id: string;
+  name: string;
+  description: string;
+  imageIds: string[];
+}
+
+/** Décor récurrent (librairie, appartement…) : une image de référence garantit sa cohérence. */
+export interface Setting {
   id: string;
   name: string;
   description: string;
@@ -55,8 +65,22 @@ export interface Project {
   updatedAt: number;
   synopsis: string;
   characters: Character[];
+  settings: Setting[];
   style: ComicStyle;
   pages: Page[];
+  /** Résumé page par page (bible de l'histoire), pour la continuité du découpage. */
+  outline?: string[];
+  tone?: string;
+  /** Seed de base du projet : cases reproductibles. */
+  seed?: number;
+}
+
+/** Projets créés avant l'ajout des décors : champs manquants complétés. */
+export function normalizeProject(p: Project): Project {
+  p.settings ??= [];
+  p.characters ??= [];
+  p.pages ??= [];
+  return p;
 }
 
 export function uid(prefix = 'x'): string {
@@ -74,6 +98,7 @@ export function newProject(title: string): Project {
     updatedAt: now,
     synopsis: '',
     characters: [],
+    settings: [],
     style: { preset: 'franco-belge', extra: '', turbo: true },
     pages: [],
   };
@@ -100,6 +125,18 @@ export const STYLES: StylePreset[] = [
   { id: 'polar', label: 'Polar noir et blanc', prompt: 'noir graphic novel, high-contrast black and white ink, heavy shadows, rain and city lights' },
   { id: 'cartoon', label: 'Cartoon jeunesse', prompt: 'friendly cartoon style for children, rounded shapes, thick outlines, cheerful saturated colors' },
   { id: 'realiste', label: 'BD réaliste peinte', prompt: 'realistic painted graphic novel art, detailed rendering, cinematic lighting, rich colors' },
+];
+
+export const TONES: [string, string][] = [
+  ['comédie', 'Comédie'],
+  ['comédie romantique', 'Comédie romantique'],
+  ['vaudeville', 'Vaudeville'],
+  ['aventure', 'Aventure'],
+  ['polar', 'Polar'],
+  ['fantastique', 'Fantastique'],
+  ['science-fiction', 'Science-fiction'],
+  ['drame', 'Drame'],
+  ['jeunesse', 'Jeunesse'],
 ];
 
 export const SHOTS: [string, string][] = [
@@ -208,19 +245,25 @@ export function panelPrompt(p: Project, panel: Panel, maxRefs = 4): RefPlan {
   lines.push(`${style?.prompt ?? ''}${p.style.extra ? ', ' + p.style.extra : ''}.`);
   lines.push(`Single comic book panel, ${panel.shot} shot. ${panel.description.trim()}`);
   const chars = panel.characters.map((id) => p.characters.find((c) => c.id === id)).filter((c): c is Character => !!c);
+  const setting = panel.setting ? (p.settings ?? []).find((x) => x.id === panel.setting) : undefined;
   const slots = maxRefs - (p.style.refImageId ? 1 : 0);
-  // D'abord la première image de chaque personnage, puis ses autres images (planche de poses…) s'il reste de la place.
+  // Ordre : 1re image de chaque personnage, image du décor, puis autres images des personnages, s'il reste de la place.
   const refsOf = new Map<string, number[]>(chars.map((c) => [c.id, []]));
-  const depth = Math.max(0, ...chars.map((c) => c.imageIds.length));
-  for (let k = 0; k < depth; k++) {
-    for (const c of chars) {
-      const img = c.imageIds[k];
-      if (img && images.length < slots) {
-        images.push(img);
-        refsOf.get(c.id)!.push(images.length);
-      }
+  const take = (c: Character, k: number) => {
+    const img = c.imageIds[k];
+    if (img && images.length < slots) {
+      images.push(img);
+      refsOf.get(c.id)!.push(images.length);
     }
+  };
+  for (const c of chars) take(c, 0);
+  let settingRef = 0;
+  if (setting?.imageIds[0] && images.length < slots) {
+    images.push(setting.imageIds[0]);
+    settingRef = images.length;
   }
+  const depth = Math.max(0, ...chars.map((c) => c.imageIds.length));
+  for (let k = 1; k < depth; k++) for (const c of chars) take(c, k);
   const list = (n: number[]) => (n.length === 1 ? `reference image ${n[0]}` : `reference images ${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
   for (const c of chars) {
     const nums = refsOf.get(c.id)!;
@@ -230,6 +273,13 @@ export function panelPrompt(p: Project, panel: Panel, maxRefs = 4): RefPlan {
       lines.push(`${c.name}: ${c.description.trim()}`);
     }
   }
+  if (setting) {
+    lines.push(
+      settingRef
+        ? `The scene takes place in ${setting.name}, shown in reference image ${settingRef}${setting.description ? ': ' + setting.description.trim() : ''}. Keep its architecture, furniture, colors and lighting consistent with that reference.`
+        : `Setting: ${setting.name}${setting.description ? ': ' + setting.description.trim() : ''}.`,
+    );
+  }
   if (p.style.refImageId) {
     images.push(p.style.refImageId);
     lines.push(`Match the drawing style, line work, shading and color palette of reference image ${images.length}, but not its content.`);
@@ -238,17 +288,37 @@ export function panelPrompt(p: Project, panel: Panel, maxRefs = 4): RefPlan {
   return { images, prompt: lines.join('\n') };
 }
 
-/** Planche de poses d'un personnage (renforce la cohérence : ajoutée comme image de référence). */
-export function turnaroundPrompt(p: Project, c: Character): string {
+/**
+ * Planche de poses d'un personnage (renforce la cohérence : ajoutée comme image de référence).
+ * Avec une photo : « le même personnage que l'image 1 » ; sans photo : dessiné d'après sa description.
+ */
+export function turnaroundPrompt(p: Project, c: Character, withRef = true): string {
   const style = STYLES.find((s) => s.id === p.style.preset);
+  const desc = c.description.trim();
   return [
-    `Character reference sheet of ${c.name}, the exact same character as in reference image 1${c.description ? ' (' + c.description.trim() + ')' : ''}.`,
+    withRef
+      ? `Character reference sheet of ${c.name}, the exact same character as in reference image 1${desc ? ' (' + desc + ')' : ''}.`
+      : `Character reference sheet of ${c.name}: ${desc || 'a comic book character'}.`,
     'Show four full-body views side by side: front view, three-quarter view, side profile, back view, plus a close-up of the face.',
     'Neutral standing pose, identical outfit and proportions in every view, plain white background.',
-    `${style?.prompt ?? ''}.`,
+    `${style?.prompt ?? ''}${p.style.extra ? ', ' + p.style.extra : ''}.`,
     'No text, no labels.',
   ].join('\n');
 }
+
+/** Image de référence d'un décor : plan d'ensemble, sans personnage. */
+export function settingPrompt(p: Project, s: Setting): string {
+  const style = STYLES.find((x) => x.id === p.style.preset);
+  return [
+    `Establishing shot of ${s.name}: ${s.description.trim() || s.name}.`,
+    'Wide view showing the whole place, its architecture, furniture, colors and lighting. Empty scene, no people.',
+    `${style?.prompt ?? ''}${p.style.extra ? ', ' + p.style.extra : ''}.`,
+    'No text, no letters, no signs with writing, no border.',
+  ].join('\n');
+}
+
+export const SHEET_SIZE = { width: 1536, height: 864 };
+export const SETTING_SIZE = { width: 1216, height: 832 };
 
 export function describeCharacterPrompt(name: string): string {
   return (
@@ -260,35 +330,114 @@ export function describeCharacterPrompt(name: string): string {
 
 export function storyPrompt(p: Project, pages: number): string {
   const cast = p.characters.map((c) => `- ${c.name}: ${c.description || 'no description'}`).join('\n') || '- (no named characters)';
+  const places = (p.settings ?? []).map((s) => `- ${s.name}: ${s.description || 'no description'}`).join('\n');
   const style = STYLES.find((s) => s.id === p.style.preset)?.label ?? p.style.preset;
+  const outline = (p.outline ?? []).map((o, i) => `Page ${i + 1}: ${o}`).join('\n');
   return [
     'You are an experienced comic book writer and storyboard artist.',
     `Split the story below into exactly ${pages} comic page(s). Each page has between 3 and 6 panels with varied framing.`,
-    `Art style: ${style}.`,
+    `Art style: ${style}.${p.tone ? ` Tone: ${p.tone}.` : ''}`,
     'Characters (use these exact names):',
     cast,
+    ...(places ? ['Settings (use these exact names):', places] : []),
     'Story:',
     p.synopsis.trim(),
+    ...(outline ? ['Page-by-page outline to follow strictly:', outline] : []),
     '',
+    'Continuity rules: every panel follows logically from the previous one; characters keep the same outfit, hairstyle and props unless the story changes them; time of day and weather stay consistent within a scene; the last page ends the story with a clear payoff.',
+    'Keep it tasteful: romance, flirting and innuendo are fine, but no nudity and no explicit sexual content.',
     'Return ONLY valid JSON, no comments, with this exact structure:',
-    '{"pages":[{"panels":[{"description":"<what is visible in the panel, in English, concrete visual details, actions, setting, lighting; no text>",' +
-      '"characters":["<names present>"],"shot":"<wide|medium|close-up|extreme close-up|over-the-shoulder|low angle|high angle|bird’s-eye view>",' +
+    '{"pages":[{"panels":[{"description":"<what is visible in the panel, in English, concrete visual details, actions, expressions, lighting; no text>",' +
+      '"characters":["<names present>"],' +
+      (places ? '"setting":"<one setting name>",' : '') +
+      '"shot":"<wide|medium|close-up|extreme close-up|over-the-shoulder|low angle|high angle|bird’s-eye view>",' +
       '"dialogues":[{"speaker":"<name>","text":"<line in French>"}],"caption":"<short French narration or empty string>"}]}]}',
     'Dialogues and captions must be in French, short (at most 20 words each), at most 2 dialogues per panel.',
   ].join('\n');
 }
 
+/** Retire le raisonnement éventuel (<think>…</think>) et les balises de code avant de lire le JSON. */
+function jsonBlock(text: string): unknown {
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('Réponse sans JSON');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+// ------------------------------------------------------------------ BD express : bible de l'histoire
+
+export interface Bible {
+  synopsis: string;
+  pages: string[];
+  characters: { name: string; description: string }[];
+  settings: { name: string; description: string }[];
+}
+
+/** Demande à l'IA la « bible » d'une BD à partir d'un simple titre : intrigue page par page, personnages, décors. */
+export function biblePrompt(p: Project, title: string, pages: number): string {
+  const style = STYLES.find((s) => s.id === p.style.preset)?.label ?? p.style.preset;
+  const fixed = p.characters.filter((c) => c.name.trim());
+  return [
+    'You are an experienced comic book writer. Write the story bible of a short comic book.',
+    `Title (French): "${title}".`,
+    `Length: exactly ${pages} page(s). Tone: ${p.tone || 'comédie'}. Art style: ${style}.`,
+    ...(fixed.length ? ['Main characters already chosen (keep these exact names and looks; you may add at most 2 secondary characters):', ...fixed.map((c) => `- ${c.name}: ${c.description || 'no description yet'}`)] : ['Create 2 to 4 characters.']),
+    'Create 1 to 3 recurring settings (places).',
+    'The story must have a clear setup, a twist and a satisfying ending on the last page. Keep it tasteful: romance, flirting and innuendo are fine, but no nudity and no explicit sexual content.',
+    'Return ONLY valid JSON, no comments, with this exact structure:',
+    '{"synopsis":"<the whole story in French, 4 to 8 sentences>",' +
+      '"pages":["<what happens on page 1, in French, 1 to 3 sentences>"],' +
+      '"characters":[{"name":"<first name>","description":"<visual description in English for an illustrator: apparent age, gender, face, hair color and style, eye color, skin tone, build, outfit with colors, accessories>"}],' +
+      '"settings":[{"name":"<short French name>","description":"<visual description in English: architecture, furniture, colors, lighting, time of day>"}]}',
+    `The "pages" array must contain exactly ${pages} item(s).`,
+  ].join('\n');
+}
+
+export function parseBible(text: string, pages: number): Bible {
+  const d = jsonBlock(text) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const list = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
+  const b: Bible = {
+    synopsis: str(d.synopsis),
+    pages: (Array.isArray(d.pages) ? d.pages : []).map((x) => (typeof x === 'string' ? x.trim() : str((x as Record<string, unknown>)?.summary))).filter(Boolean),
+    characters: list(d.characters).map((c) => ({ name: str(c?.name), description: str(c?.description) })).filter((c) => c.name).slice(0, 6),
+    settings: list(d.settings).map((c) => ({ name: str(c?.name), description: str(c?.description) })).filter((c) => c.name).slice(0, 4),
+  };
+  if (!b.synopsis && !b.pages.length) throw new Error('JSON sans histoire');
+  if (!b.characters.length) throw new Error('JSON sans personnages');
+  b.pages = b.pages.slice(0, pages);
+  return b;
+}
+
+/** Applique la bible au projet : personnages existants gardés (description complétée), nouveaux ajoutés, décors remplacés. */
+export function applyBible(p: Project, b: Bible): void {
+  p.synopsis = b.synopsis || b.pages.join(' ');
+  p.outline = b.pages;
+  const key = (n: string) => n.trim().toLowerCase();
+  for (const c of b.characters) {
+    const cur = p.characters.find((x) => key(x.name) === key(c.name));
+    if (cur) {
+      if (!cur.description.trim()) cur.description = c.description;
+    } else p.characters.push({ id: uid('k'), name: c.name, description: c.description, imageIds: [] });
+  }
+  const keep = (p.settings ?? []).filter((s) => s.imageIds.length || b.settings.some((x) => key(x.name) === key(s.name)));
+  p.settings = keep;
+  for (const s of b.settings) {
+    const cur = p.settings.find((x) => key(x.name) === key(s.name));
+    if (cur) {
+      if (!cur.description.trim()) cur.description = s.description;
+    } else p.settings.push({ id: uid('s'), name: s.name, description: s.description, imageIds: [] });
+  }
+}
+
 export interface ParsedStory {
-  pages: { panels: { description: string; characters: string[]; shot: string; dialogues: { speaker: string; text: string }[]; caption: string }[] }[];
+  pages: { panels: { description: string; characters: string[]; setting: string; shot: string; dialogues: { speaker: string; text: string }[]; caption: string }[] }[];
 }
 
 /** Lit la réponse JSON du modèle de langage, même entourée de texte ou de balises ```json. */
 export function parseStory(text: string): ParsedStory {
-  const cleaned = text.replace(/```(?:json)?/gi, '');
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('Réponse sans JSON');
-  const data = JSON.parse(cleaned.slice(start, end + 1)) as { pages?: unknown };
+  const data = jsonBlock(text) as { pages?: unknown };
   if (!Array.isArray(data.pages) || !data.pages.length) throw new Error('JSON sans pages');
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   return {
@@ -300,6 +449,7 @@ export function parseStory(text: string): ParsedStory {
           return {
             description: str(r.description),
             characters: Array.isArray(r.characters) ? (r.characters as unknown[]).map(str).filter(Boolean) : [],
+            setting: str(r.setting),
             shot: SHOTS.some(([k]) => k === r.shot) ? str(r.shot) : 'medium',
             dialogues: Array.isArray(r.dialogues)
               ? (r.dialogues as Record<string, unknown>[]).slice(0, 3).map((d) => ({ speaker: str(d?.speaker), text: str(d?.text) })).filter((d) => d.text)
@@ -332,6 +482,7 @@ export function storyToPages(p: Project, story: ParsedStory): Page[] {
       characters: pa.characters
         .map((name) => p.characters.find((c) => c.name.trim().toLowerCase() === name.trim().toLowerCase())?.id)
         .filter((x): x is string => !!x),
+      setting: (p.settings ?? []).find((s) => s.name.trim().toLowerCase() === pa.setting.trim().toLowerCase())?.id,
       bubbles: defaultBubbles(pa.dialogues, pa.caption),
     }));
     return { id: uid('g'), layout: layoutFor(panels.length).id, panels };

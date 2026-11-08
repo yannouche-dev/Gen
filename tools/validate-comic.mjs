@@ -4,7 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildFlux, buildQwen, FLUX, QWEN } from '../web/src/comic/flux.ts';
-import { cellRects, generationSize, getLayout, LAYOUTS, newProject, panelPrompt, newPanel, storyPrompt, describeCharacterPrompt } from '../web/src/comic/model.ts';
+import { cellRects, generationSize, getLayout, LAYOUTS, newProject, panelPrompt, newPanel, storyPrompt, describeCharacterPrompt, biblePrompt } from '../web/src/comic/model.ts';
+import { planComic } from '../web/src/comic/express.ts';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const COMFY = process.env.COMFY || 'http://127.0.0.1:8188';
@@ -50,5 +51,25 @@ for (const l of LAYOUTS) {
 if (!(await check('Qwen 3.5 description (image)', buildQwen(qwen, { prompt: describeCharacterPrompt('Léa'), image: refs[0], maxLength: 300, temperature: 0.4, seed: 1 })))) failures++;
 p.synopsis = 'Léa cherche son chat sous la pluie.';
 if (!(await check('Qwen 3.5 découpage (texte seul)', buildQwen(qwen, { prompt: storyPrompt(p, 2), maxLength: 4096, temperature: 0.7, seed: 2 })))) failures++;
+
+// BD express : planches générées dans le graphe et branchées comme références, travaux fusionnés.
+if (!(await check('Qwen 3.5 bible (titre seul)', buildQwen(qwen, { prompt: biblePrompt(newProject('x'), 'La libraire veut rendre son mari jaloux', 3), maxLength: 2048, temperature: 0.8, seed: 3 })))) failures++;
+const e = newProject('express');
+e.seed = 9;
+e.characters = [
+  { id: 'k1', name: 'Claire', description: 'bob haircut, round glasses', imageIds: [] },
+  { id: 'k2', name: 'Paul', description: 'grey beard', imageIds: ['photo'] },
+  { id: 'k3', name: 'Lucie', description: 'teenager', imageIds: [] },
+];
+e.settings = [{ id: 's1', name: 'La librairie', description: 'cozy bookshop', imageIds: [] }, { id: 's2', name: 'La cuisine', description: 'yellow tiles', imageIds: [] }];
+e.pages = LAYOUTS.map((l, gi) => ({
+  id: `g${gi}`,
+  layout: l.id,
+  panels: cellRects(l).map((_, ci) => ({ ...newPanel(), id: `c${gi}x${ci}`, description: `panel ${ci}`, characters: ['k1', 'k2', 'k3'].slice(0, ci % 4), setting: ci % 3 ? `s${ci % 3}` : undefined })),
+}));
+for (const job of planComic(e)) {
+  const wf = job.build(flux, job.uploads.map(() => refs[0]), 'videogen/comic_validate_express');
+  if (!(await check(`BD express ${job.label} (${Object.keys(wf).length} nœuds)`, wf))) failures++;
+}
 console.log(failures ? `${failures} échec(s)` : 'Toutes les requêtes BD sont valides.');
 process.exit(failures ? 1 : 0);

@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { checkAvailability, type ApiPrompt } from '../../web/src/workflows/build.ts';
-import { buildFlux, buildQwen, FLUX, QWEN } from '../../web/src/comic/flux.ts';
+import { buildFlux, buildQwen, mergeGraphs, outputKey, FLUX, QWEN } from '../../web/src/comic/flux.ts';
 import {
-  LAYOUTS, PAGE_H, PAGE_W, cellRects, generationSize, layoutCount, layoutFor, newPanel, newProject, panelPrompt, parseStory, storyPrompt, storyToPages,
+  LAYOUTS, PAGE_H, PAGE_W, applyBible, biblePrompt, cellRects, generationSize, layoutCount, layoutFor, newPanel, newProject, normalizeProject, panelPrompt,
+  parseBible, parseStory, storyPrompt, storyToPages, type Project,
 } from '../../web/src/comic/model.ts';
+import { countImages, planComic } from '../../web/src/comic/express.ts';
 import { buildCbz, buildPdf, buildZip, crc32, jpegSize } from '../../web/src/comic/export.ts';
 import { fakeLlm } from '../../mocks/mock-comfy.mjs';
 
@@ -187,5 +189,110 @@ describe('Export PDF / CBZ', () => {
   });
   it('ZIP vide', () => {
     expect(buildZip([]).length).toBe(22);
+  });
+});
+
+describe('BD express : bible, décors, travaux fusionnés', () => {
+  const p = newProject('Express');
+  p.seed = 7;
+  p.characters = [
+    { id: 'k1', name: 'Claire', description: 'bob haircut', imageIds: [] },
+    { id: 'k2', name: 'Paul', description: 'grey beard', imageIds: ['photo'] },
+  ];
+  p.settings = [{ id: 's1', name: 'La librairie', description: 'cozy bookshop', imageIds: [] }];
+  p.pages = [
+    { id: 'g1', layout: 'm3', panels: [
+      { ...newPanel(), id: 'c1', description: 'Claire reads', characters: ['k1'], setting: 's1' },
+      { ...newPanel(), id: 'c2', description: 'Paul enters', characters: ['k1', 'k2'], setting: 's1' },
+      { ...newPanel(), id: 'c3', description: 'street', characters: [], imageId: 'done' },
+    ] },
+    { id: 'g2', layout: 'p1', panels: [{ ...newPanel(), id: 'c4', description: 'kitchen', characters: ['k2'] }] },
+  ];
+
+  it('bible : JSON lu malgré un raisonnement <think> contenant des accolades', () => {
+    const b = parseBible(fakeLlm(biblePrompt(newProject('x'), 'La libraire veut rendre son mari jaloux', 3)), 3);
+    expect(b.pages).toHaveLength(3);
+    expect(b.characters.map((c) => c.name)).toEqual(['Claire', 'Paul']);
+    expect(b.settings).toHaveLength(2);
+    const q = newProject('x');
+    q.characters = [{ id: 'k', name: 'claire', description: '', imageIds: ['img'] }];
+    applyBible(q, b);
+    expect(q.characters).toHaveLength(2); // Claire existante complétée, Paul ajouté
+    expect(q.characters[0].imageIds).toEqual(['img']);
+    expect(q.characters[0].description).toContain('bob haircut');
+    expect(q.settings.map((s) => s.name)).toEqual(['La librairie', 'La cuisine']);
+    expect(q.outline).toHaveLength(3);
+  });
+
+  it('découpage relié aux décors par leur nom', () => {
+    const q = newProject('x');
+    q.characters = [{ id: 'k', name: 'Claire', description: '', imageIds: [] }];
+    q.settings = [{ id: 's', name: 'La librairie', description: '', imageIds: [] }];
+    const prompt = storyPrompt(q, 1);
+    expect(prompt).toContain('Settings (use these exact names):');
+    expect(prompt).toContain('no explicit sexual content');
+    const pages = storyToPages(q, parseStory(fakeLlm(prompt)));
+    expect(pages[0].panels[0].setting).toBe('s');
+  });
+
+  it('prompt de case : personnage, puis décor en référence', () => {
+    const q = structuredClone(p);
+    q.characters[0].imageIds = ['claire'];
+    q.settings[0].imageIds = ['shop'];
+    const plan = panelPrompt(q, q.pages[0].panels[1]);
+    expect(plan.images).toEqual(['claire', 'photo', 'shop']);
+    expect(plan.prompt).toContain('takes place in La librairie, shown in reference image 3');
+  });
+
+  it('plan : un travail « planches » puis un travail par page, références branchées dans le graphe', () => {
+    const jobs = planComic(p, { onlyEmpty: true });
+    expect(jobs.map((j) => j.id)).toEqual(['planches', 'page-g1', 'page-g2']);
+    expect(jobs[0].outputs.map((o) => o.key)).toEqual(['k-k1', 's-s1']);
+    expect(jobs[1].outputs.map((o) => o.key)).toEqual(['p-c1', 'p-c2']); // c3 a déjà une image
+    expect(jobs[1].uploads).toEqual(['photo']);
+    expect(countImages(jobs)).toBe(5);
+
+    const planches = jobs[0].build(flux, [], 'videogen/bd_1');
+    linksOk(planches);
+    expect(Object.values(planches).filter((n) => n.class_type === 'UNETLoader')).toHaveLength(1);
+    expect(Object.values(planches).filter((n) => n.class_type === 'SaveImage').map((n) => n.inputs.filename_prefix).sort()).toEqual(['videogen/bd_1_k-k1', 'videogen/bd_1_s-s1']);
+
+    const page = jobs[1].build(flux, ['videogen/photo.png'], 'videogen/bd_2');
+    linksOk(page);
+    expect(checkAvailability(page, info).missingNodes).toEqual([]);
+    expect(Object.values(page).filter((n) => n.class_type === 'UNETLoader')).toHaveLength(1);
+    expect(Object.values(page).filter((n) => n.class_type === 'SamplerCustomAdvanced')).toHaveLength(4); // planche, décor, 2 cases
+    expect(Object.values(page).filter((n) => n.class_type === 'SaveImage').map((n) => n.inputs.filename_prefix).sort()).toEqual(['videogen/bd_2_p-c1', 'videogen/bd_2_p-c2']);
+    // La case 2 utilise la planche de Claire (générée dans le graphe), la photo de Paul et le décor.
+    const sources: string[] = [];
+    let cur = page['p-c2:62:22'].inputs.conditioning as [string, number];
+    while (page[cur[0]].class_type === 'ReferenceLatent') {
+      const enc = page[(page[cur[0]].inputs.latent as [string, number])[0]];
+      const scale = page[(enc.inputs.pixels as [string, number])[0]];
+      sources.unshift((scale.inputs.image as [string, number])[0]);
+      cur = page[cur[0]].inputs.conditioning as [string, number];
+    }
+    expect(sources).toHaveLength(3);
+    expect(sources[0]).toBe('k-k1:62:8'); // planche de Claire, décodée dans le même graphe
+    expect(page[sources[1]].class_type).toBe('LoadImage');
+    expect(page[sources[1]].inputs.image).toBe('videogen/photo.png');
+    expect(sources[2]).toBe('s-s1:62:8'); // décor
+    // La référence commune aux cases 1 et 2 (planche de Claire) n'est encodée qu'une fois.
+    expect(Object.values(page).filter((n) => n.class_type === 'VAEEncode')).toHaveLength(3);
+    // Mêmes seeds d'un travail à l'autre : la planche est reprise du cache de ComfyUI.
+    const sheetSeed = (g: ApiPrompt) => Object.entries(g).find(([k, n]) => k.startsWith('k-k1') && n.class_type === 'RandomNoise')![1].inputs.noise_seed;
+    expect(sheetSeed(page)).toBe(sheetSeed(planches));
+  });
+
+  it('fusion : référence inconnue refusée, clé de fichier reconnue', () => {
+    expect(() => mergeGraphs([{ key: 'p-x', graph: buildFlux(flux, { prompt: 'x', refs: [['@nope', 0]], width: 1024, height: 1024, seed: 1, turbo: true, outputPrefix: 'x' }), save: true }], 'v/b')).toThrow(/inconnue/);
+    expect(outputKey('flux2-bd_123_p-c1x_00004_.png', 'videogen/flux2-bd_123')).toBe('p-c1x');
+    expect(outputKey('autre_00001_.png', 'videogen/flux2-bd_123')).toBeNull();
+  });
+
+  it('projets anciens : décors ajoutés', () => {
+    const old = { ...newProject('vieux') } as Partial<Project>;
+    delete old.settings;
+    expect(normalizeProject(old as Project).settings).toEqual([]);
   });
 });
