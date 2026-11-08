@@ -9,6 +9,7 @@ Sous-commandes :
 Routes (préfixe /videogen, jeton vérifié par Caddy) :
   GET  /videogen/status         étapes, progression des modèles, tunnel, watchdog, disque
   GET  /videogen/log?tail=N     fin du journal de démarrage (secrets masqués)
+  GET  /videogen/files?prefix=P sorties non encore récupérées dont le chemin commence par P
   POST /videogen/files/delete   {"files":[{"filename","subfolder","type"}]} supprime des sorties
 """
 import json
@@ -20,6 +21,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -46,7 +48,10 @@ def env_int(name, default):
 
 IDLE_MINUTES = float(os.environ.get("IDLE_MINUTES", "20") or 20)
 MAX_HOURS = float(os.environ.get("MAX_HOURS", "4") or 4)
-OUTPUT_TTL_MIN = env_int("OUTPUT_TTL_MINUTES", 120)
+# Une vidéo non récupérée (téléphone en veille, onglet fermé…) reste sur l'instance jusqu'à sa
+# récupération ; garde-fou disque : 7 jours. Les images envoyées et fichiers temporaires : 2 h.
+OUTPUT_TTL_MIN = env_int("OUTPUT_TTL_MINUTES", 7 * 24 * 60)
+INPUT_TTL_MIN = env_int("INPUT_TTL_MINUTES", 120)
 WATCHDOG_PERIOD = env_int("WATCHDOG_PERIOD_SECONDS", 30)
 
 
@@ -323,7 +328,7 @@ class Watchdog:
         t = now()
         if MAX_HOURS > 0 and t - self.boot_ts() >= MAX_HOURS * 3600:
             return self.trigger("durée maximale atteinte (%g h)" % MAX_HOURS)
-        purge_old_files(OUTPUT_TTL_MIN)
+        purge_old_files(OUTPUT_TTL_MIN, INPUT_TTL_MIN)
         if not self.counting():
             self.idle_since = None
             return
@@ -341,7 +346,8 @@ class Watchdog:
             self.triggered = True
             self.reason = reason
         publish("VIDEOGEN_STEP=auto_stop:%s" % reason)
-        purge_old_files(0)
+        # Les vidéos non récupérées sont CONSERVÉES (récupérables au prochain démarrage).
+        purge_old_files(None, 0)
         if DRY_RUN:
             return
         ok = stop_self()
@@ -402,9 +408,15 @@ def safe_path(ftype, subfolder, filename):
     return target
 
 
-def purge_old_files(ttl_minutes):
-    limit = now() - ttl_minutes * 60
-    for sub in ("output", "temp", "input/videogen"):
+def purge_old_files(output_ttl_minutes, input_ttl_minutes):
+    """Supprime les sorties plus vieilles que output_ttl (None = jamais) et les entrées/temporaires
+    plus vieilles que input_ttl."""
+    t = now()
+    rules = [("temp", input_ttl_minutes), ("input/videogen", input_ttl_minutes)]
+    if output_ttl_minutes is not None:
+        rules.append(("output", output_ttl_minutes))
+    for sub, ttl in rules:
+        limit = t - ttl * 60
         root = os.path.join(COMFY_DIR, sub)
         for dirpath, _dirs, files in os.walk(root):
             for name in files:
@@ -414,6 +426,26 @@ def purge_old_files(ttl_minutes):
                         os.remove(p)
                 except OSError:
                     pass
+
+
+PREFIX_RE = __import__("re").compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$")
+
+
+def list_outputs(prefix):
+    """Sorties dont le chemin relatif commence par prefix (ex. videogen/ltx25-t2v_1731000000000).
+    Sert à retrouver une vidéo quand l'historique de ComfyUI a été perdu (redémarrage)."""
+    if not PREFIX_RE.match(prefix) or ".." in prefix:
+        raise ValueError("préfixe refusé")
+    base = os.path.realpath(os.path.join(COMFY_DIR, "output"))
+    out = []
+    for dirpath, _dirs, files in os.walk(base):
+        for name in sorted(files):
+            rel = os.path.relpath(os.path.join(dirpath, name), base).replace(os.sep, "/")
+            if rel.startswith(prefix):
+                sub = os.path.dirname(rel)
+                out.append({"filename": name, "subfolder": sub, "type": "output",
+                            "size": os.path.getsize(os.path.join(dirpath, name))})
+    return out
 
 
 # --------------------------------------------------------------------------- serveur
@@ -481,6 +513,15 @@ class Handler(BaseHTTPRequestHandler):
                         pass
             text = read_text(os.path.join(LOGS, "onstart.log"))
             return self.send_json(200, {"lines": [mask(l) for l in text.splitlines()[-tail:]]})
+        if path == "/videogen/files":
+            prefix = ""
+            for part in query.split("&"):
+                if part.startswith("prefix="):
+                    prefix = urllib.parse.unquote(part[7:])
+            try:
+                return self.send_json(200, {"files": list_outputs(prefix)})
+            except ValueError:
+                return self.send_json(400, {"error": "bad_prefix"})
         return self.send_json(404, {"error": "not_found"})
 
     def do_POST(self):

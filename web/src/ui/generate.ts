@@ -5,7 +5,9 @@ import { app, type Prefill } from './context.ts';
 import { journal } from '../core/journal.ts';
 import { loadPresets, savePresets, type GenPreset } from '../core/settings.ts';
 import { computeSize, frameCount, randomSeed, readInput, supportedOptions, MAX_SEED, type ModelDef } from '../workflows/build.ts';
-import { Generation, GenerationError } from '../comfy/generate.ts';
+import { Generation, GenerationError, type GenEvents } from '../comfy/generate.ts';
+import { listPending, removePending } from '../core/pending.ts';
+import { holdAwake, releaseAwake } from '../core/wakelock.ts';
 import { explainError } from '../comfy/errors.ts';
 import { thumbnail, videoMeta, lastFrame } from '../media/frames.ts';
 import type { GalleryItem } from '../media/gallery.ts';
@@ -39,6 +41,7 @@ export class GenerateScreen {
   private st: FormState | null = null;
   private gen: Generation | null = null;
   private previewUrl: string | null = null;
+  private resuming = false;
   private imageUrls: string[] = [];
 
   constructor() {
@@ -47,7 +50,10 @@ export class GenerateScreen {
       if (w === 'registry' || w === 'availability') this.renderForm();
       if (w === 'route' && app.route === 'generate') this.onShow();
     });
-    app.manager.onChange(() => this.renderNotice());
+    app.manager.onChange((ms) => {
+      this.renderNotice();
+      if (ms.phase === 'ready' && app.manager.comfy && listPending().length) void this.resumePending();
+    });
     this.renderNotice();
     this.renderForm();
   }
@@ -314,7 +320,8 @@ export class GenerateScreen {
     const st = this.st;
     const m = this.currentModel();
     const c = app.manager.comfy;
-    if (!st || !m || !c || !app.registry) return;
+    const inst = app.manager.state.instance;
+    if (!st || !m || !c || !app.registry || !inst) return;
     if (!st.prompt.trim()) return toast('Écris un prompt', 'error');
     if (m.params.startImage?.required && !st.startImage) return toast('Ajoute une image de début', 'error');
     if (m.params.endImage?.required && !st.endImage) return toast('Ajoute une image de fin', 'error');
@@ -332,39 +339,89 @@ export class GenerateScreen {
       enhancePrompt: st.enhancePrompt,
       fast: st.fast,
     };
-    const statusEl = h('p', { class: 'gen-status', 'data-testid': 'gen-status' }, 'Préparation…');
-    const bar = h('progress', { max: 1, value: 0, 'data-testid': 'gen-bar' }) as HTMLProgressElement;
-    const stepEl = h('p', { class: 'hint' });
-    const img = h('img', { class: 'gen-preview hidden', alt: 'Aperçu' }) as HTMLImageElement;
-    const timer = h('span', { class: 'hint' });
-    const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-big', 'data-testid': 'cancel' }, 'Annuler');
-    replace(this.progressBox, h('h2', null, 'Génération'), statusEl, bar, stepEl, timer, img, cancel);
-    this.progressBox.classList.remove('hidden');
-    this.resultBox.classList.add('hidden');
-    const t0 = Date.now();
-    const tick = setInterval(() => (timer.textContent = `Écoulé : ${fmtDuration(Date.now() - t0)}`), 1000);
-
-    const gen = new Generation({
+    const parentId = st.parentId;
+    st.parentId = undefined;
+    await this.follow((events) => new Generation({
       client: c,
-      registry: app.registry,
+      registry: app.registry!,
       model: m,
       workflow: app.workflows.get(m.id)!,
       params,
       startImage: st.startImage,
       endImage: st.endImage,
       stallMinutes: app.settings.stallMinutes,
-      events: {
-        onStatus: (t) => (statusEl.textContent = t),
-        onProgress: (p) => {
-          bar.value = p.overall;
-          stepEl.textContent = `${Math.round(p.overall * 100)} % · ${p.label}${p.max ? ` (${p.value}/${p.max})` : ''}`;
-        },
-        onPreview: (b) => {
-          if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
-          this.previewUrl = URL.createObjectURL(b);
-          img.src = this.previewUrl;
-          img.classList.remove('hidden');
-        },
+      instanceId: inst.id,
+      parentId,
+      events,
+    }), { model: m, params, startImage: st.startImage, endImage: st.endImage, parentId, startedAt: Date.now() });
+  }
+
+  /** Reprend les générations lancées avant une mise en veille ou une fermeture de l'onglet. */
+  async resumePending(): Promise<void> {
+    const c = app.manager.comfy;
+    const inst = app.manager.state.instance;
+    const jobs = listPending();
+    if (!jobs.length) return;
+    if (!c || !inst || !app.registry || this.gen || this.resuming) return;
+    this.resuming = true;
+    try {
+      for (const job of jobs) {
+        const m = app.model(job.modelId);
+        const known = app.manager.state.all.some((i) => i.id === job.instanceId) || inst.id === job.instanceId;
+        if (!m || !known) {
+          journal.warn('génération', `Génération ${job.promptId} abandonnée : instance #${job.instanceId} introuvable`);
+          removePending(job.promptId);
+          continue;
+        }
+        if (job.instanceId !== inst.id) continue;
+        toast('Reprise d’une génération en cours…', 'info');
+        await this.follow((events) => new Generation({
+          client: c,
+          registry: app.registry!,
+          model: m,
+          workflow: app.workflows.get(m.id)!,
+          params: job.params,
+          stallMinutes: app.settings.stallMinutes,
+          instanceId: job.instanceId,
+          parentId: job.parentId,
+          resume: job,
+          events,
+        }), { model: m, params: job.params, startImage: null, endImage: null, parentId: job.parentId, startedAt: job.startedAt });
+      }
+    } finally {
+      this.resuming = false;
+    }
+  }
+
+  /** Affiche la progression d'une génération (nouvelle ou reprise) puis range le résultat dans la galerie. */
+  private async follow(
+    make: (events: GenEvents) => Generation,
+    ctx: { model: ModelDef; params: GalleryItem['params']; startImage: Blob | null; endImage: Blob | null; parentId?: string; startedAt: number },
+  ) {
+    const statusEl = h('p', { class: 'gen-status', 'data-testid': 'gen-status' }, 'Préparation…');
+    const bar = h('progress', { max: 1, value: 0, 'data-testid': 'gen-bar' }) as HTMLProgressElement;
+    const stepEl = h('p', { class: 'hint' });
+    const img = h('img', { class: 'gen-preview hidden', alt: 'Aperçu' }) as HTMLImageElement;
+    const timer = h('span', { class: 'hint' });
+    const note = h('p', { class: 'hint' }, 'La génération tourne sur l’instance : tu peux verrouiller le téléphone, le suivi reprendra au réveil.');
+    const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-big', 'data-testid': 'cancel' }, 'Annuler');
+    replace(this.progressBox, h('h2', null, 'Génération'), statusEl, bar, stepEl, timer, img, note, cancel);
+    this.progressBox.classList.remove('hidden');
+    this.resultBox.classList.add('hidden');
+    const tick = setInterval(() => (timer.textContent = `Écoulé : ${fmtDuration(Date.now() - ctx.startedAt)}`), 1000);
+    holdAwake('génération');
+
+    const gen = make({
+      onStatus: (t) => (statusEl.textContent = t),
+      onProgress: (p) => {
+        bar.value = p.overall;
+        stepEl.textContent = `${Math.round(p.overall * 100)} % · ${p.label}${p.max ? ` (${p.value}/${p.max})` : ''}`;
+      },
+      onPreview: (b) => {
+        if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
+        this.previewUrl = URL.createObjectURL(b);
+        img.src = this.previewUrl;
+        img.classList.remove('hidden');
       },
     });
     this.gen = gen;
@@ -372,30 +429,30 @@ export class GenerateScreen {
       if (await confirmDialog({ title: 'Annuler la génération ?', ok: 'Annuler la génération', cancel: 'Continuer', danger: true })) void gen.cancel();
     });
     this.renderForm();
+    const m = ctx.model;
     try {
       const r = await gen.promise;
-      const meta = await videoMeta(r.blob).catch(() => ({ duration: st.duration, width: 0, height: 0 }));
+      const meta = await videoMeta(r.blob).catch(() => ({ duration: ctx.params.duration, width: 0, height: 0 }));
       const thumb = await thumbnail(r.blob);
-      const size = computeSize(app.registry, m, st.preset, st.ratio);
+      const size = computeSize(app.registry!, m, ctx.params.preset, ctx.params.ratio);
       const item = app.gallery.add({
         kind: 'generated',
         modelId: m.id,
         modelLabel: m.label,
-        params,
+        params: ctx.params,
         seed: r.seed,
         blob: r.blob,
         thumb,
         thumbUrl: null,
         width: meta.width || size.width,
         height: meta.height || size.height,
-        duration: meta.duration || st.duration,
+        duration: meta.duration || ctx.params.duration,
         hasAudio: m.audio,
         elapsedMs: r.elapsedMs,
-        startImage: st.startImage,
-        endImage: st.endImage,
-        parentId: st.parentId,
+        startImage: ctx.startImage,
+        endImage: ctx.endImage,
+        parentId: ctx.parentId,
       });
-      st.parentId = undefined;
       this.progressBox.classList.add('hidden');
       this.showResult(item);
       toast('Vidéo prête', 'ok');
@@ -412,6 +469,7 @@ export class GenerateScreen {
       );
     } finally {
       clearInterval(tick);
+      releaseAwake('génération');
       this.gen = null;
       if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
       this.previewUrl = null;

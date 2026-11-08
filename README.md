@@ -206,6 +206,13 @@ y sont masquées automatiquement.
    - **Rejouer** (mêmes réglages et même seed), **Prolonger**, **Télécharger**, **Supprimer** ;
    - **Timeline** : ordre réglable avec ↑ et ↓, puis **Assembler** avec ffmpeg.wasm, chargé à la demande depuis le site (≈ 32 Mo).
 6. Les vidéos ne vivent **que dans l'onglet**, en mémoire : télécharge celles que tu veux garder. Les fichiers sont supprimés de l'instance dès qu'ils ont été récupérés.
+
+   **Téléphone en veille :** la génération tourne sur l'instance, pas dans le téléphone. Tu peux verrouiller l'écran :
+   - au réveil, le suivi reprend tout seul et la vidéo est récupérée ;
+   - si le navigateur a fermé l'onglet, la génération en cours est reprise à la réouverture, après déverrouillage ;
+   - une vidéo non récupérée reste sur l'instance, même après un arrêt automatique : redémarre l'instance pour la récupérer.
+
+   L'écran reste allumé pendant le démarrage et les générations, si le navigateur le permet.
 7. **Toutes tes instances Vast** sont listées en haut de l'onglet Instance, quel que soit leur label, y compris celles
    d'autres projets ou créées depuis la console Vast. Les instances **allumées** (GPU facturé) apparaissent en premier,
    en rouge, avec **Arrêter** et **Détruire**. La liste suit toutes les pages de l'API et se vérifie **chaque minute**

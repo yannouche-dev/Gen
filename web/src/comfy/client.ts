@@ -60,6 +60,17 @@ export class ComfyClient {
   agentLog(tail = 200): Promise<{ lines: string[] }> {
     return requestJson(`${this.base}/videogen/log?tail=${tail}`, { cat: 'instance', headers: this.h() });
   }
+  /** Sorties encore présentes sur l'instance dont le chemin commence par prefix (agent videogen). */
+  async listOutputs(prefix: string): Promise<FileRef[]> {
+    const res = await requestJson<{ files: FileRef[] }>(`${this.base}/videogen/files?prefix=${encodeURIComponent(prefix)}`, {
+      cat: 'comfy',
+      headers: this.h(),
+      quiet: true,
+      soft: true,
+      silentStatuses: [404],
+    });
+    return res.files ?? [];
+  }
   deleteFiles(files: FileRef[]): Promise<{ deleted: string[]; missing: string[]; refused: string[] }> {
     return requestJson(`${this.base}/videogen/files/delete`, { cat: 'comfy', headers: this.h(), json: { files } });
   }
@@ -71,13 +82,14 @@ export class ComfyClient {
     return requestJson(`${this.base}/object_info`, { cat: 'comfy', headers: this.h(), timeoutMs: 60000 });
   }
   queue(quiet = true): Promise<{ queue_running: unknown[][]; queue_pending: unknown[][] }> {
-    return requestJson(`${this.base}/queue`, { cat: 'comfy', headers: this.h(), quiet });
+    return requestJson(`${this.base}/queue`, { cat: 'comfy', headers: this.h(), quiet, soft: quiet });
   }
   async history(promptId: string, quiet = true): Promise<HistoryEntry | null> {
     const res = await requestJson<Record<string, HistoryEntry>>(`${this.base}/history/${encodeURIComponent(promptId)}`, {
       cat: 'comfy',
       headers: this.h(),
       quiet,
+      soft: quiet,
     });
     return res[promptId] ?? null;
   }

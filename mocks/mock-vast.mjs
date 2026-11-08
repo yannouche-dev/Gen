@@ -78,13 +78,25 @@ export function createVastMock({ shared, origin, speed = 1 }) {
     // --- Contrôle des tests
     if (url.pathname === '/__mock/state') {
       const c = shared.comfy?.state;
-      return send(res, 200, { instances: [...state.instances.values()], creates: state.creates, requests: state.requests, comfy: c ? { deletions: c.deletions, views: c.views, uploads: [...c.uploads], prompts: c.prompts.length } : null });
+      return send(res, 200, { instances: [...state.instances.values()], creates: state.creates, requests: state.requests, comfy: c ? { deletions: c.deletions, views: c.views, uploads: [...c.uploads], prompts: c.prompts.length, outputs: c.outputs, running: !!c.running } : null });
     }
     if (url.pathname === '/__mock/reset' && req.method === 'POST') {
       state.instances.clear();
       state.creates = [];
       state.requests = [];
       shared.comfy?.reset();
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__mock/comfy-down' && req.method === 'POST') {
+      shared.comfy?.setDown(true);
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__mock/comfy-up' && req.method === 'POST') {
+      shared.comfy?.setDown(false);
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__mock/forget-history' && req.method === 'POST') {
+      shared.comfy?.forgetHistory();
       return send(res, 200, { ok: true });
     }
     if (url.pathname === '/__mock/seed-many' && req.method === 'POST') {

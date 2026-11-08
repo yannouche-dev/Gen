@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -182,6 +183,30 @@ class AgentTest(unittest.TestCase):
         st = get("http://127.0.0.1:18732/videogen/status")
         self.assertTrue(st["watchdog"]["triggered"])
         self.assertIn("file vide", st["watchdog"]["reason"])
+
+    def test_list_outputs_by_prefix_and_kept_on_auto_stop(self):
+        out_dir = os.path.join(self.home, "ComfyUI", "output", "videogen")
+        with open(os.path.join(out_dir, "ltx25-t2v_1731_00001_.mp4"), "w") as f:
+            f.write("video")
+        with open(os.path.join(out_dir, "autre_00001_.mp4"), "w") as f:
+            f.write("x")
+        up = os.path.join(self.home, "ComfyUI", "input", "videogen", "vg_img.png")
+        with open(up, "w") as f:
+            f.write("png")
+        self.run_agent("mark", "models", "done")
+        self.serve(18735)
+        res = get("http://127.0.0.1:18735/videogen/files?prefix=videogen/ltx25-t2v_1731")
+        self.assertEqual([f["filename"] for f in res["files"]], ["ltx25-t2v_1731_00001_.mp4"])
+        self.assertEqual(res["files"][0]["subfolder"], "videogen")
+        with self.assertRaises(urllib.error.HTTPError):
+            get("http://127.0.0.1:18735/videogen/files?prefix=../src")
+        # Arrêt automatique (inactivité) : la vidéo non récupérée est conservée, l'image envoyée supprimée.
+        deadline = time.time() + 20
+        while time.time() < deadline and not [c for c in self.fake.calls if c[0] == "PUT"]:
+            time.sleep(0.5)
+        self.assertTrue([c for c in self.fake.calls if c[0] == "PUT"])
+        self.assertTrue(os.path.exists(os.path.join(out_dir, "ltx25-t2v_1731_00001_.mp4")))
+        self.assertFalse(os.path.exists(up))
 
     def test_watchdog_waits_while_downloading_or_busy(self):
         self.run_agent("mark", "models", "running")

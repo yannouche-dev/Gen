@@ -11,6 +11,7 @@ import { GenerateScreen } from './ui/generate.ts';
 import { GalleryScreen } from './ui/gallery.ts';
 import { JournalScreen } from './ui/journal.ts';
 import { confirmDialog } from './ui/dialog.ts';
+import { holdAwake, releaseAwake } from './core/wakelock.ts';
 
 const root = document.getElementById('app')!;
 
@@ -124,6 +125,9 @@ function updateBanner() {
 setInterval(updateBanner, 1000);
 app.manager.onChange(() => {
   updateBanner();
+  // Écran maintenu allumé pendant le démarrage (le travail continue de toute façon sur l'instance).
+  if (['renting', 'starting', 'booting'].includes(app.manager.state.phase)) holdAwake('démarrage');
+  else releaseAwake('démarrage');
   if (app.manager.state.phase === 'ready') void app.refreshAvailability().catch((e) => journal.warn('modèles', 'Lecture de /object_info impossible', e));
   else if (!app.manager.comfy) app.invalidateAvailability();
 });

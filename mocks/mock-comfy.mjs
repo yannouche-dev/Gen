@@ -30,22 +30,28 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     deletions: [],
     views: [],
     prompts: [],
+    outputs: [],
     outputCount: 0,
   };
   const sockets = new Map(); // clientId -> Set<ws>
 
   const api = {
     reset() {
-      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputCount: 0 });
+      Object.assign(st, { installed: ['ltx25'], downloaded: new Set(), bootAt: 0, down: false, uploads: new Set(), history: {}, running: null, pending: [], deletions: [], views: [], prompts: [], outputs: [], outputCount: 0 });
     },
     setInstalled(fams) {
       st.installed = fams;
+    },
+    forgetHistory() {
+      st.history = {};
     },
     markDownloaded(fams) {
       for (const f of filesFor(fams)) st.downloaded.add(f.name);
     },
     setDown(v) {
       st.down = v;
+      // Coupure du tunnel : les WebSocket ouverts tombent aussi (le calcul continue côté serveur).
+      if (v) for (const set of sockets.values()) for (const ws of set) ws.terminate();
     },
     boot() {
       st.bootAt = Date.now();
@@ -202,6 +208,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       const [sub, base] = prefix.includes('/') ? [prefix.split('/')[0], prefix.split('/').slice(1).join('/')] : ['', prefix];
       const filename = `${base}_${String(st.outputCount).padStart(5, '0')}_${fixture}.mp4`;
       const out = { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
+      st.outputs.push({ filename, subfolder: sub });
       st.history[id] = { prompt: [0, id, prompt, {}, []], outputs: { [save?.[0] ?? '1']: out }, status: { status_str: 'success', completed: true, messages: [['execution_success', { prompt_id: id }]] } };
       emit(clientId, { type: 'executed', data: { node: save?.[0], display_node: save?.[0], output: out, prompt_id: id } });
       emit(clientId, { type: 'execution_success', data: { prompt_id: id, timestamp: Date.now() } });
@@ -232,9 +239,15 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
 
     if (p === '/videogen/status') return send(res, 200, agentStatus());
     if (p === '/videogen/log') return send(res, 200, { lines: ['2026-11-08T10:00:00Z VIDEOGEN_BOOT=1', 'Python : /venv/main/bin/python (2.10.0 12.8)', 'HF_TOKEN=hf_…cdef (masqué)'] });
+    if (p === '/videogen/files' && req.method === 'GET') {
+      const prefix = url.searchParams.get('prefix') ?? '';
+      const files = st.outputs.filter((f) => `${f.subfolder}/${f.filename}`.startsWith(prefix)).map((f) => ({ ...f, type: 'output', size: 1000 }));
+      return send(res, 200, { files });
+    }
     if (p === '/videogen/files/delete' && req.method === 'POST') {
       const files = json().files ?? [];
       st.deletions.push(...files);
+      st.outputs = st.outputs.filter((o) => !files.some((f) => f.filename === o.filename));
       return send(res, 200, { deleted: files.map((f) => f.filename), missing: [], refused: [] });
     }
     if (!comfyUp) return send(res, 502, 'Bad Gateway', 'text/plain');
