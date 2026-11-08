@@ -25,6 +25,25 @@ function matches(o, q) {
   return true;
 }
 
+// Faux catalogue Hugging Face (/api/models) : LoRA LTX-2.5 et FLUX.2, plus des pièges à exclure (dépôt adulte,
+// modèle de base, LoRA d'un autre modèle).
+const HF_MODELS = [
+  { id: 'org/ltx25-dolly-cam', downloads: 5400, likes: 120, tags: ['diffusers', 'lora', 'base_model:adapter:Lightricks/LTX-2.5'], createdAt: '2026-10-02T10:00:00.000Z' },
+  { id: 'org/ltx25-ink-style', downloads: 900, likes: 300, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5'], createdAt: '2026-11-01T10:00:00.000Z' },
+  { id: 'nsfw/ltx25-spicy', downloads: 99999, likes: 999, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5', 'not-for-all-audiences'], createdAt: '2026-10-20T10:00:00.000Z' },
+  { id: 'Lightricks/LTX-2.5', downloads: 500000, likes: 4000, tags: ['diffusers', 'text-to-video'], createdAt: '2026-09-01T10:00:00.000Z' },
+  { id: 'someone/LTX-2.5-anime-lora', downloads: 2000, likes: 50, tags: ['lora'], createdAt: '2026-10-15T10:00:00.000Z' },
+  { id: 'x/ltx-2-19b-lora', downloads: 7000, likes: 80, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2'], createdAt: '2026-03-01T10:00:00.000Z' },
+  { id: 'org/flux2-comic-ink', downloads: 3100, likes: 210, tags: ['lora', 'base_model:adapter:black-forest-labs/FLUX.2-dev'], createdAt: '2026-10-10T10:00:00.000Z' },
+  { id: 'z/FLUX.2-watercolor', downloads: 1500, likes: 40, tags: ['lora'], createdAt: '2026-10-12T10:00:00.000Z' },
+  { id: 'q/flux1-anime', downloads: 80000, likes: 900, tags: ['lora', 'base_model:adapter:black-forest-labs/FLUX.1-dev'], createdAt: '2025-01-01T10:00:00.000Z' },
+];
+function hfModelList(params) {
+  const filters = params.getAll('filter');
+  const search = (params.get('search') ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return HF_MODELS.filter((m) => filters.every((f) => m.tags.includes(f)) && (!search || m.id.toLowerCase().replace(/[^a-z0-9]/g, '').includes(search)));
+}
+
 export function createVastMock({ shared, origin, speed = 1 }) {
   const state = { instances: new Map(), nextId: 9001, creates: [], logs: new Map(), requests: [] };
   shared.vast = state;
@@ -56,6 +75,8 @@ export function createVastMock({ shared, origin, speed = 1 }) {
     if (url.pathname.startsWith('/hf/')) {
       const cors = { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'Authorization', Vary: 'Origin' };
       if (req.method === 'OPTIONS') return res.writeHead(204, cors), res.end();
+      // Liste publique des modèles (sans token, comme l'API réelle) : catalogue des LoRA.
+      if (url.pathname === '/hf/api/models') return send(res, 200, hfModelList(url.searchParams), cors);
       const ok = req.headers.authorization === `Bearer ${VALID_HF_TOKEN}`;
       if (!ok) return send(res, 401, { error: 'Invalid credentials in Authorization header' }, cors);
       if (url.pathname === '/hf/api/whoami-v2') return send(res, 200, { type: 'user', name: 'testuser', auth: { accessToken: { displayName: 'videogen', role: 'fineGrained' } } }, cors);

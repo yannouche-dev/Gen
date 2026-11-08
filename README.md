@@ -365,7 +365,15 @@ Une LoRA ajuste le modèle sans le remplacer : un style de dessin, un mouvement 
 Elles viennent **uniquement de Hugging Face** et marchent avec **LTX-2.5** (onglet Générer) et **FLUX.2 Dev**
 (Style du Studio BD).
 
-1. **Instance → LoRA** (instance prête) : colle le lien Hugging Face.
+1. **Catalogue** (Instance → LoRA → *Catalogue Hugging Face*, consultable même sans instance) : la liste en
+   direct de toutes les LoRA publiées pour **LTX-2.5** ou **FLUX.2 Dev**.
+   - Deux sources : les dépôts qui déclarent ce modèle de base, et une recherche par nom.
+   - Tri par téléchargements, likes ou date ; recherche par mot (dolly, anime, ink…).
+   - **Installer** en un geste (choix du fichier si le dépôt en contient plusieurs) ; *Voir la page* ouvre Hugging Face.
+   - Les LoRA d'autres modèles (LTX-2, FLUX.1) et les dépôts marqués réservés aux adultes ne sont pas listés.
+   - La liste vient de l'API publique de Hugging Face, appelée depuis ton navigateur, sans token.
+
+   Ou **Instance → LoRA** (instance prête) : colle le lien Hugging Face.
    - Lien d'un fichier (`…/blob/main/fichier.safetensors`) : installé directement.
    - Lien d'un dépôt : la liste de ses fichiers `.safetensors` s'affiche, choisis-en un.
    - **Faite pour** : LTX-2.5 ou FLUX.2 Dev, deviné d'après le nom, à corriger si besoin.
@@ -552,6 +560,7 @@ Les tests de bout en bout couvrent :
 - Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
 - visionneuse plein écran : zoom aux boutons, double-tap, molette et pincement, déplacement, balayage entre pages, PNG de la page, fermeture par ✕ et par « retour » ;
 - BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet ;
+- catalogue de LoRA : liste par modèle (exclusion des dépôts adultes, du modèle de base et des LoRA d'autres modèles), tri, recherche, installation en un geste ;
 - LoRA : installation depuis un dépôt (choix du fichier) ou un lien direct, refus d'un dépôt protégé et d'un autre site, LoRA LTX dans Générer et LoRA de style FLUX.2 dans le Studio BD (nœuds vérifiés), suppression, réinstallation sur une nouvelle instance.
 
 Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, travaux fusionnés de la BD express sur les 8 gabarits) contre un vrai ComfyUI :

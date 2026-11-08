@@ -1000,3 +1000,53 @@ details > summary {
 .page-canvas {
   cursor: zoom-in;
 }
+
+/* ---------------------------------------------------------------- catalogue de LoRA */
+.lora-catalog {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.lora-catalog summary {
+  font-weight: 700;
+  cursor: pointer;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+}
+.lora-catalog .row {
+  margin: 6px 0;
+}
+.lora-catalog .row .input {
+  flex: 1;
+  min-width: 0;
+}
+.catalog-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.catalog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.catalog-name {
+  overflow-wrap: anywhere;
+}
+.catalog-item .badge {
+  color: var(--ok);
+  font-weight: 700;
+  align-self: center;
+}
+.catalog-item a.btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}

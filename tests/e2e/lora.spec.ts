@@ -100,3 +100,38 @@ test('LoRA : installation depuis Hugging Face, Générer (LTX) et Studio BD (FLU
   await expect(page.getByTestId('lora-item')).toHaveCount(2, { timeout: 20_000 });
   await expect(page.getByTestId('lora-reinstall')).toHaveCount(0);
 });
+
+test('catalogue Hugging Face : liste des LoRA par modèle, tri, recherche, installation en un geste', async ({ page }) => {
+  await enterKeys(page);
+  await page.getByTestId('tab-instance').click();
+  // Consultable avant même de louer une instance
+  await page.getByTestId('lora-catalog').locator('summary').click();
+  await expect(page.getByTestId('catalog-count')).toHaveText('3 LoRA pour LTX-2.5 (vidéo)');
+  const names = () => page.getByTestId('catalog-item').locator('.catalog-name').allTextContents();
+  expect(await names()).toEqual(['ltx25-dolly-cam', 'LTX-2.5-anime-lora', 'ltx25-ink-style']); // dépôt adulte, modèle de base et LoRA LTX-2 exclus
+  await expect(page.getByTestId('lora-catalog')).toContainText('Les dépôts réservés aux adultes ne sont pas listés');
+  await page.getByTestId('catalog-sort').selectOption('likes');
+  await expect.poll(names).toEqual(['ltx25-ink-style', 'ltx25-dolly-cam', 'LTX-2.5-anime-lora']);
+  await page.getByTestId('catalog-base').selectOption('flux2dev');
+  await expect(page.getByTestId('catalog-count')).toHaveText('2 LoRA pour FLUX.2 Dev (Studio BD)');
+  expect(await names()).toEqual(['flux2-comic-ink', 'FLUX.2-watercolor']); // LoRA FLUX.1 exclue
+  await page.getByTestId('catalog-base').selectOption('ltx25');
+  await page.getByTestId('catalog-search').fill('ink');
+  await page.getByTestId('catalog-go').click();
+  await expect(page.getByTestId('catalog-count')).toHaveText('1 LoRA pour LTX-2.5 (vidéo) (« ink »)');
+  await page.getByTestId('catalog-install').click();
+  await expect(page.locator('.toast-error', { hasText: 'Démarre d’abord l’instance' })).toBeVisible();
+
+  // Instance prête : installation depuis le catalogue (choix du fichier du dépôt), puis « installée »
+  await rentAndWaitReady(page);
+  // Le catalogue reste ouvert, avec sa recherche, pendant que la carte se met à jour.
+  expect(await page.getByTestId('lora-catalog').evaluate((d) => (d as HTMLDetailsElement).open)).toBe(true);
+  await expect(page.getByTestId('catalog-item')).toHaveCount(1);
+  await page.getByTestId('catalog-install').click();
+  await expect(page.getByTestId('lora-file').locator('option')).toHaveCount(2);
+  await expect(page.getByTestId('lora-base')).toHaveValue('ltx25');
+  await page.getByTestId('lora-install').click();
+  await expect(page.getByTestId('lora-item')).toHaveCount(1, { timeout: 20_000 });
+  await expect(page.getByTestId('lora-item')).toContainText('ltx25-ink-style__');
+  await expect(page.getByTestId('catalog-installed')).toHaveText('✓ installée');
+});
