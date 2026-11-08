@@ -500,8 +500,15 @@ export class GenerateScreen {
 /** Prolonger : extrait la dernière image dans le navigateur et prépare un image → vidéo enchaîné. */
 export async function extendItem(item: GalleryItem): Promise<void> {
   const m = app.model(item.modelId);
-  const target = app.model(m?.extendWith ?? '') ?? app.registry?.models.find((x) => x.mode === 'i2v' && x.family === m?.family);
-  if (!target) return toast('Aucun modèle image → vidéo pour prolonger', 'error');
+  // Modèle image → vidéo pour enchaîner : celui prévu, sinon un autre de la même famille, sinon n'importe
+  // lequel d'installé sur l'instance (ex. Wan 2.1 1.3B → Wan 2.2 5B).
+  const usable = (id?: string) => {
+    const x = id ? app.model(id) : undefined;
+    return x && x.mode === 'i2v' && (app.availability.size === 0 || app.availability.get(x.id)?.ok) ? x : undefined;
+  };
+  const i2v = app.registry?.models.filter((x) => x.mode === 'i2v') ?? [];
+  const target = usable(m?.extendWith) ?? i2v.map((x) => usable(x.id)).find((x) => x && x.family === m?.family) ?? i2v.map((x) => usable(x.id)).find(Boolean);
+  if (!target) return toast('Aucun modèle image → vidéo installé sur l’instance pour prolonger (ex. coche « Test léger : Wan 2.2 5B »)', 'error');
   toast('Extraction de la dernière image…', 'info');
   try {
     const frame = await lastFrame(item.blob, (t) => toast(t, 'info'));

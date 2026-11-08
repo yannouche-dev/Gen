@@ -20,8 +20,13 @@ const COMFY = process.env.COMFY || 'http://127.0.0.1:8188';
 const TEMPLATES_DIR = process.env.TEMPLATES_DIR;
 const MODELS_DIR = process.env.COMFY_MODELS_DIR;
 
-// id du workflow -> [fichier template officiel, famille de poids]
+// id du workflow -> [fichier template officiel, famille de poids, options]
+// Option enable : types de nœuds présents dans le template mais désactivés (« bypass ») par défaut, à activer
+// (ex. l'image de début du template Wan 2.2 5B « TI2V », prévu pour les deux usages).
 export const TEMPLATES = {
+  'wan21-1.3b-t2v': ['text_to_video_wan.json', 'wan21s'],
+  'wan22-5b-t2v': ['video_wan2_2_5B_ti2v.json', 'wan22s'],
+  'wan22-5b-i2v': ['video_wan2_2_5B_ti2v.json', 'wan22s', { enable: ['LoadImage'] }],
   'ltx25-t2v': ['video_ltx2_5_t2v.json', 'ltx25'],
   'ltx25-i2v': ['video_ltx2_5_i2v.json', 'ltx25'],
   'ltx25-flf2v': ['video_ltx2_5_flf2v.json', 'ltx25'],
@@ -30,7 +35,13 @@ export const TEMPLATES = {
   'hy15-t2v': ['video_hunyuan_video_1.5_720p_t2v.json', 'hunyuan15'],
   'hy15-i2v': ['video_hunyuan_video_1.5_720p_i2v.json', 'hunyuan15'],
 };
-const FAMILY_LABELS = { ltx25: 'LTX-2.5', wan22: 'Wan 2.2 (14B)', hunyuan15: 'HunyuanVideo 1.5 (720p)' };
+const FAMILY_LABELS = {
+  ltx25: 'LTX-2.5',
+  wan22: 'Wan 2.2 (14B)',
+  hunyuan15: 'HunyuanVideo 1.5 (720p)',
+  wan21s: 'Test minimal : Wan 2.1 1.3B',
+  wan22s: 'Test léger : Wan 2.2 5B',
+};
 
 function walkNodes(wf) {
   const out = [...(wf.nodes || [])];
@@ -55,8 +66,9 @@ async function main() {
   if (!TEMPLATES_DIR) throw new Error('TEMPLATES_DIR manquant');
   const weights = { generated_by: 'tools/convert-templates.mjs', families: {} };
   const templates = {};
-  for (const [id, [file, fam]] of Object.entries(TEMPLATES)) {
+  for (const [id, [file, fam, opts = {}]] of Object.entries(TEMPLATES)) {
     const wf = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, file), 'utf8'));
+    for (const n of walkNodes(wf)) if (opts.enable?.includes(n.type)) n.mode = 0;
     templates[id] = wf;
     const famEntry = (weights.families[fam] ||= { label: FAMILY_LABELS[fam], files: [] });
     for (const m of modelsOf(wf)) {

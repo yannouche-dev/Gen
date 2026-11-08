@@ -184,11 +184,16 @@ def fetch_models():
     weights = load_weights()
     fams = enabled_families()
     files = []
+    seen = set()
     for fam in fams:
         spec = weights.get("families", {}).get(fam)
         if not spec:
             continue
         for item in spec.get("files", []):
+            key = (item["dir"], os.path.basename(item["path"]))
+            if key in seen:  # fichier partagé entre familles (ex. encodeur umt5) : une seule fois
+                continue
+            seen.add(key)
             files.append(dict(item, family=fam))
     state = {"state": "running", "families": fams, "files": [], "total_bytes": 0, "done_bytes": 0,
              "started": now(), "error": None}

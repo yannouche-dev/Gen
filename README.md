@@ -158,7 +158,11 @@ y sont masquées automatiquement.
 - [ ] Ferme et rouvre le site : l'écran **Déverrouiller** demande ta phrase de passe.
 
 **B. Démarrage**
-- [ ] Dans **Réglages de location**, laisse les valeurs par défaut :
+- [ ] **Premier test rapide et peu coûteux (conseillé) :** dans **Réglages de location → Modèles à installer**, décoche
+  LTX-2.5 et coche **« Test minimal : Wan 2.1 1.3B »** (≈ 10 Go au lieu de ≈ 52 Go). Coche plutôt
+  **« Test léger : Wan 2.2 5B »** (≈ 18 Go) pour tester aussi **Prolonger**. Tu peux baisser le **disque à 60 Go**.
+  Pour le vrai usage, recoche LTX-2.5 et loue une nouvelle instance.
+- [ ] Sinon, dans **Réglages de location**, laisse les valeurs par défaut :
   - 1 GPU, RTX PRO 6000 puis RTX 5090 ;
   - fiabilité ≥ 99 % et débit ≥ 500 Mb/s ;
   - disque 150 Go et modèles **LTX-2.5** seulement ;
@@ -174,7 +178,11 @@ y sont masquées automatiquement.
   - Modèles téléchargés : **%** en direct, environ 52 Go pour LTX-2.5 ;
   - ✓ Prêt.
 
-**C. Première génération (LTX-2.5, courte, 720p)**
+**C. Première génération**
+
+Avec la famille de test : modèle **Wan 2.1 1.3B · Texte → vidéo (test)**, 480p, 2 s. Avec LTX-2.5, suis les étapes ci-dessous.
+
+**Génération LTX-2.5 (courte, 720p)**
 - [ ] Onglet **Générer**. Modèle **LTX-2.5 · Texte → vidéo**. Wan et Hunyuan apparaissent « absent du serveur » : c'est normal, ils ne sont pas installés.
 - [ ] Résolution **720p**, format **16:9** (1280 × 704), durée **3 s**, 24 i/s.
 - [ ] Prompt, par exemple : `A red fox trotting through fresh snow at sunrise, cinematic tracking shot`.
@@ -231,7 +239,7 @@ résolution et la durée. Le résultat se place juste après l'original dans la 
 |---|---|---|
 | GPU + machine (`dph_total`) | à la seconde, **tant que l'instance tourne** (y compris pendant l'installation) | affiché sur chaque offre et dans la confirmation ; RTX PRO 6000 plus chère que RTX 5090 |
 | Stockage du disque | **tout le temps** tant que l'instance existe, **même arrêtée** | affiché dans l'onglet Instance quand elle est arrêtée (≈ prix/Go/mois × taille ÷ 30 par jour) |
-| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 52 Go (LTX-2.5), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan |
+| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 52 Go (LTX-2.5), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan ; familles de test : ≈ 10 Go (Wan 2.1 1.3B) ou ≈ 18 Go (Wan 2.2 5B) |
 
 - **Le bandeau de coût** en haut de l'écran donne la durée allumée et le coût estimé de la session (prix/h × durée).
 - **Le crédit Vast restant** est affiché dans l'onglet Instance.
@@ -244,7 +252,7 @@ résolution et la durée. Le résultat se place juste après l'original dans la 
 Les workflows sont **convertis des templates officiels ComfyUI** (paquet `comfyui-workflow-templates` 0.11.103,
 installé avec ComfyUI v0.44.2), sans modification. La conversion passe par le frontend officiel (« Export API »).
 Chaque combinaison d'options que l'interface peut produire a été **validée par un vrai ComfyUI v0.44.2**
-(`tools/validate-workflows.mjs`, 65 variantes).
+(`tools/validate-workflows.mjs`, 86 variantes).
 
 | Id | Template officiel | Famille (poids) |
 |---|---|---|
@@ -255,6 +263,9 @@ Chaque combinaison d'options que l'interface peut produire a été **validée pa
 | `wan22-i2v` | `video_wan2_2_14B_i2v.json` | Wan 2.2 |
 | `hy15-t2v` | `video_hunyuan_video_1.5_720p_t2v.json` | HunyuanVideo 1.5 720p (≈ 45 Go) : T2V et I2V fp16, Qwen2.5-VL 7B fp8, byT5, VAE, SigCLIP |
 | `hy15-i2v` | `video_hunyuan_video_1.5_720p_i2v.json` | HunyuanVideo 1.5 |
+| `wan21-1.3b-t2v` | `text_to_video_wan.json` | **Test minimal** Wan 2.1 1.3B (≈ 10 Go) : modèle 1.3B fp16, umt5 fp8, VAE 2.1 ; 480p, 1 à 5 s |
+| `wan22-5b-t2v` | `video_wan2_2_5B_ti2v.json` | **Test léger** Wan 2.2 5B (≈ 18 Go) : TI2V 5B fp16, umt5 fp8, VAE 2.2 ; 480p ou 720p |
+| `wan22-5b-i2v` | `video_wan2_2_5B_ti2v.json`, nœud « image de début » activé (désactivé par défaut dans le template) | Test léger Wan 2.2 5B |
 
 Les noms de fichiers et les dépôts Hugging Face viennent des templates eux-mêmes (`instance/weights.json`). Pour
 installer Wan ou Hunyuan, coche la famille dans *Réglages de location* **avant** de louer. Le disque est augmenté
@@ -379,7 +390,7 @@ Les tests de bout en bout couvrent :
 **Vérifié pendant le développement :**
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
-- **Workflows** : les 7 workflows et 65 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
+- **Workflows** : les 10 workflows et 86 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).
 - **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, testés contre de faux serveurs.
