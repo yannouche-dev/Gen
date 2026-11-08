@@ -15,6 +15,23 @@ const FIXTURES = {
   c: fs.readFileSync(path.join(HERE, 'fixtures/c.mp4')),
 };
 const PREVIEW = fs.readFileSync(path.join(HERE, 'fixtures/preview.jpg'));
+const PANEL = fs.readFileSync(path.join(HERE, 'fixtures/panel.png'));
+
+/** Réponses factices de Qwen 3.5 (TextGenerate) : découpage en pages (JSON) ou description de personnage. */
+export function fakeLlm(prompt) {
+  const m = prompt.match(/exactly (\d+) comic page/);
+  if (!m) return 'A young woman in her twenties with short copper-red hair, green eyes, freckles, slim build, wearing a dark green leather jacket over a white t-shirt, blue jeans and red sneakers.';
+  const names = [...prompt.matchAll(/^- ([^:\n]+):/gm)].map((x) => x[1]).filter((n) => !n.startsWith('('));
+  const who = names[0] ?? 'Héroïne';
+  const pages = Array.from({ length: Number(m[1]) }, (_, p) => ({
+    panels: [
+      { description: `Page ${p + 1}: wide shot of a rainy harbor at dusk`, characters: [who], shot: 'wide', dialogues: [], caption: p === 0 ? 'Il pleuvait depuis trois jours.' : 'Plus tard…' },
+      { description: `${who} looks at a mysterious letter`, characters: [who], shot: 'close-up', dialogues: [{ speaker: who, text: 'Qui a bien pu m’écrire ?' }], caption: '' },
+      { description: `${who} runs along the docks`, characters: [who], shot: 'low angle', dialogues: [{ speaker: who, text: 'Je dois y aller, vite !' }], caption: '' },
+    ],
+  }));
+  return 'Voici le découpage :\n```json\n' + JSON.stringify({ pages }) + '\n```';
+}
 
 export function createComfyMock({ shared, origin, speed = 1 }) {
   const T = (ms) => Math.max(5, Math.round(ms * speed));
@@ -135,7 +152,7 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
 
   function textOf(prompt) {
     return Object.values(prompt)
-      .flatMap((n) => [n.inputs.value, n.inputs.text])
+      .flatMap((n) => [n.inputs.value, n.inputs.text, n.inputs.prompt])
       .filter((v) => typeof v === 'string')
       .join(' ');
   }
@@ -165,7 +182,9 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     const text = textOf(prompt);
     const slow = text.includes('#slow');
     const oom = text.includes('#oom');
-    const save = Object.entries(prompt).find(([, n]) => n.class_type === 'SaveVideo');
+    const save = Object.entries(prompt).find(([, n]) => n.class_type === 'SaveVideo' || n.class_type === 'SaveImage');
+    const image = save?.[1].class_type === 'SaveImage';
+    const llm = Object.values(prompt).find((n) => n.class_type === 'TextGenerate');
     const samplers = Object.entries(prompt).filter(([, n]) => /Sampler/.test(n.class_type) && !/Select/.test(n.class_type)).map(([k]) => k);
     const steps = slow ? 40 : 6;
     const tick = T(slow ? 300 : 60);
@@ -204,17 +223,21 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     at(() => {
       const fixture = audio ? (st.outputCount % 2 ? 'b' : 'a') : 'c';
       st.outputCount++;
-      const prefix = String(save?.[1].inputs.filename_prefix ?? 'videogen/out');
-      const [sub, base] = prefix.includes('/') ? [prefix.split('/')[0], prefix.split('/').slice(1).join('/')] : ['', prefix];
-      const filename = `${base}_${String(st.outputCount).padStart(5, '0')}_${fixture}.mp4`;
-      const out = { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
-      st.outputs.push({ filename, subfolder: sub });
-      const outputs = { [save?.[0] ?? '1']: out };
-      // Nœud PreviewAny des templates LTX : renvoie le prompt réellement utilisé (amélioré ou non).
+      const outputs = {};
+      let out = null;
+      if (save) {
+        const prefix = String(save[1].inputs.filename_prefix ?? 'videogen/out');
+        const [sub, base] = prefix.includes('/') ? [prefix.split('/')[0], prefix.split('/').slice(1).join('/')] : ['', prefix];
+        const filename = image ? `${base}_${String(st.outputCount).padStart(5, '0')}_.png` : `${base}_${String(st.outputCount).padStart(5, '0')}_${fixture}.mp4`;
+        out = image ? { images: [{ filename, subfolder: sub, type: 'output' }] } : { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
+        st.outputs.push({ filename, subfolder: sub });
+        outputs[save[0]] = out;
+      }
+      // Nœud PreviewAny : prompt réellement utilisé (templates LTX) ou texte généré (Qwen 3.5).
       const preview = Object.entries(prompt).find(([, n]) => n.class_type === 'PreviewAny');
-      if (preview) outputs[preview[0]] = { text: [`Enhanced: ${text.slice(0, 200)}`] };
+      if (preview) outputs[preview[0]] = { text: [llm ? fakeLlm(String(llm.inputs.prompt ?? '')) : `Enhanced: ${text.slice(0, 200)}`] };
       st.history[id] = { prompt: [0, id, prompt, {}, []], outputs, status: { status_str: 'success', completed: true, messages: [['execution_success', { prompt_id: id }]] } };
-      emit(clientId, { type: 'executed', data: { node: save?.[0], display_node: save?.[0], output: out, prompt_id: id } });
+      if (out) emit(clientId, { type: 'executed', data: { node: save[0], display_node: save[0], output: out, prompt_id: id } });
       emit(clientId, { type: 'execution_success', data: { prompt_id: id, timestamp: Date.now() } });
       emit(clientId, { type: 'executing', data: { node: null, prompt_id: id } });
       st.running = null;
@@ -305,6 +328,10 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
     if (p === '/view') {
       const fn = url.searchParams.get('filename') ?? '';
       st.views.push(fn);
+      if (/\.png$/.test(fn) && st.outputs.some((o) => o.filename === fn)) {
+        res.writeHead(200, { 'Content-Type': 'image/png', ...cors });
+        return res.end(PANEL);
+      }
       const key = fn.match(/_([abc])\.mp4$/)?.[1];
       if (!key) return send(res, 404, { error: 'not found' });
       res.writeHead(200, { 'Content-Type': 'video/mp4', ...cors });

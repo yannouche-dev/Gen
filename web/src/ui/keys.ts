@@ -173,7 +173,7 @@ export function renderKeys(root: HTMLElement, onSaved: () => void): void {
         await vault.update(data);
       } else {
         if (!pass.value) throw new Error('Choisis une phrase de passe (8 caractères minimum).');
-        await vault.create(pass.value, { ...data, comfyTokens: unlocked ? vault.secrets.comfyTokens : {} }, remember.checked);
+        await vault.create(pass.value, { ...data, comfyTokens: unlocked ? vault.secrets.comfyTokens : {}, projectsKey: unlocked ? vault.secrets.projectsKey : undefined }, remember.checked);
       }
       toast('Clés enregistrées', 'ok');
       journal.info('clés', 'Clés enregistrées');

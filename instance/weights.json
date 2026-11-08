@@ -1,6 +1,46 @@
 {
   "generated_by": "tools/convert-templates.mjs",
   "families": {
+    "flux2dev": {
+      "label": "Studio BD : FLUX.2 Dev",
+      "files": [
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "path": "split_files/vae/flux2-vae.safetensors",
+          "dir": "vae",
+          "name": "flux2-vae.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "path": "split_files/diffusion_models/flux2_dev_fp8mixed.safetensors",
+          "dir": "diffusion_models",
+          "name": "flux2_dev_fp8mixed.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "path": "split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors",
+          "dir": "text_encoders",
+          "name": "mistral_3_small_flux2_fp8.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "path": "split_files/loras/Flux2TurboComfyv2.safetensors",
+          "dir": "loras",
+          "name": "Flux2TurboComfyv2.safetensors"
+        }
+      ]
+    },
+    "qwen35": {
+      "label": "Studio BD : IA d’écriture Qwen 3.5 4B",
+      "files": [
+        {
+          "repo": "Comfy-Org/Qwen3.5",
+          "path": "text_encoders/qwen3.5_4b_bf16.safetensors",
+          "dir": "text_encoders",
+          "name": "qwen3.5_4b_bf16.safetensors"
+        }
+      ]
+    },
     "wan21s": {
       "label": "Test minimal : Wan 2.1 1.3B",
       "files": [

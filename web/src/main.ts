@@ -9,6 +9,7 @@ import { renderKeys, renderUnlock } from './ui/keys.ts';
 import { InstanceScreen } from './ui/instance.ts';
 import { GenerateScreen } from './ui/generate.ts';
 import { GalleryScreen } from './ui/gallery.ts';
+import { ComicScreen } from './ui/comic.ts';
 import { JournalScreen } from './ui/journal.ts';
 import { confirmDialog } from './ui/dialog.ts';
 import { holdAwake, releaseAwake } from './core/wakelock.ts';
@@ -25,6 +26,7 @@ if (window.top !== window.self) {
 const TABS: [Route, string][] = [
   ['instance', 'Instance'],
   ['generate', 'Générer'],
+  ['comic', 'BD'],
   ['gallery', 'Galerie'],
   ['journal', 'Journal'],
   ['keys', 'Clés'],
@@ -69,6 +71,7 @@ function show() {
   screens ??= {
     instance: new InstanceScreen(),
     generate: new GenerateScreen(),
+    comic: new ComicScreen(),
     gallery: new GalleryScreen(),
     journal: new JournalScreen(),
   };

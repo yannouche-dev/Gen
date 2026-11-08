@@ -60,7 +60,7 @@ export class GenerateScreen {
     });
     app.manager.onChange((ms) => {
       this.renderNotice();
-      if (ms.phase === 'ready' && app.manager.comfy && listPending().length) void this.resumePending();
+      if (ms.phase === 'ready' && app.manager.comfy && listPending().some((j) => !j.meta?.comic)) void this.resumePending();
     });
     this.renderNotice();
     this.renderForm();
@@ -155,6 +155,7 @@ export class GenerateScreen {
     // Sélecteur de modèle
     const select = h('select', { class: 'input', id: 'model', 'data-testid': 'model-select' }) as HTMLSelectElement;
     for (const [famId, fam] of Object.entries(reg.families)) {
+      if (!reg.models.some((x) => x.family === famId)) continue; // familles sans modèle vidéo (Studio BD)
       const group = h('optgroup', { label: fam.label });
       for (const mm of reg.models.filter((x) => x.family === famId)) {
         const av = app.availability.get(mm.id);
@@ -474,7 +475,7 @@ export class GenerateScreen {
   async resumePending(): Promise<void> {
     const c = app.manager.comfy;
     const inst = app.manager.state.instance;
-    const jobs = listPending();
+    const jobs = listPending().filter((j) => !j.meta?.comic);
     if (!jobs.length) return;
     if (!c || !inst || !app.registry || this.gen || this.resuming) return;
     this.resuming = true;

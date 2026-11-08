@@ -131,7 +131,7 @@ h3 {
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   background: var(--card);
   border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
@@ -721,4 +721,103 @@ details > summary {
 .enhanced p {
   white-space: pre-wrap;
   font-size: 0.9rem;
+}
+
+/* ---------------------------------------------------------------- Studio BD */
+.steps-nav {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.steps-nav .seg {
+  flex: 1 0 auto;
+  padding: 0 10px;
+  font-size: 0.85rem;
+}
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.thumb-box {
+  position: relative;
+  display: inline-block;
+}
+.thumb-box .btn-small {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-height: 28px;
+  padding: 2px 8px;
+}
+.thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.page-preview {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  margin: 8px auto;
+  aspect-ratio: 1654 / 2339;
+  touch-action: none;
+}
+.page-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 25%);
+}
+.bubble-handle {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-text);
+  opacity: 0.8;
+  font-size: 16px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.panel-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.panel-title {
+  font-weight: 700;
+}
+.panel-title small {
+  font-weight: 400;
+}
+.panel-card summary .thumb {
+  width: 56px;
+  height: 56px;
+}
+.panel-card[open] summary {
+  margin-bottom: 8px;
+}
+.bubble-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.hint.err {
+  color: var(--danger);
 }

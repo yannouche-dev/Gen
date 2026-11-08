@@ -11,7 +11,7 @@ import { gallery } from '../media/gallery.ts';
 declare const __BUILD__: BuildInfo;
 export const BUILD: BuildInfo = __BUILD__;
 
-export type Route = 'instance' | 'generate' | 'gallery' | 'journal' | 'keys';
+export type Route = 'instance' | 'generate' | 'comic' | 'gallery' | 'journal' | 'keys';
 
 /** Pré-remplissage du formulaire de génération (Rejouer / Prolonger). */
 export interface Prefill {

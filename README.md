@@ -3,6 +3,8 @@
 Interface web statique (GitHub Pages) qui **loue, configure, surveille et arrête** une machine GPU sur
 [Vast.ai](https://vast.ai), y installe **ComfyUI** et les modèles vidéo, puis te laisse générer des vidéos
 **LTX-2.5**, **Wan 2.2** et **HunyuanVideo 1.5** depuis le navigateur.
+Le **Studio BD** fabrique aussi des bandes dessinées : personnages de référence cohérents de case en case
+(FLUX.2 Dev), histoire découpée en pages par une IA locale (Qwen 3.5), bulles en français, export PDF/CBZ.
 
 Tes clés se saisissent **uniquement dans l'interface**, une fois. Elles restent chiffrées dans ton navigateur.
 Au quotidien : **Démarrer → Générer → Arrêter**.
@@ -16,12 +18,13 @@ Au quotidien : **Démarrer → Générer → Arrêter**.
 3. [Première configuration (une seule fois)](#3-première-configuration-une-seule-fois)
 4. [Checklist du premier test réel (sur mobile)](#4-checklist-du-premier-test-réel-sur-mobile)
 5. [Usage quotidien](#5-usage-quotidien)
-6. [Coûts](#6-coûts)
-7. [Modèles disponibles et ajout d'un modèle](#7-modèles-disponibles-et-ajout-dun-modèle)
-8. [Dépannage](#8-dépannage)
-9. [Sécurité : risques et protections](#9-sécurité--risques-et-protections)
-10. [Développement et tests](#10-développement-et-tests)
-11. [Ce qui a été vérifié, ce qui ne l'a pas été](#11-ce-qui-a-été-vérifié-ce-qui-ne-la-pas-été)
+6. [Studio BD](#6-studio-bd)
+7. [Coûts](#7-coûts)
+8. [Modèles disponibles et ajout d'un modèle](#8-modèles-disponibles-et-ajout-dun-modèle)
+9. [Dépannage](#9-dépannage)
+10. [Sécurité : risques et protections](#10-sécurité--risques-et-protections)
+11. [Développement et tests](#11-développement-et-tests)
+12. [Ce qui a été vérifié, ce qui ne l'a pas été](#12-ce-qui-a-été-vérifié-ce-qui-ne-la-pas-été)
 
 ---
 
@@ -75,7 +78,8 @@ web/                     Interface (Vite + TypeScript, sans framework)
   src/comfy/             client ComfyUI (REST + WebSocket), génération, erreurs lisibles
   src/workflows/         construction des requêtes /prompt à partir de models.json
   src/media/             galerie (Blob en mémoire), dernière image, ffmpeg.wasm
-  src/ui/                écrans : Instance, Générer, Galerie, Journal, Clés
+  src/comic/             Studio BD : gabarits, prompts, requêtes FLUX.2/Qwen, stockage chiffré, rendu, PDF/CBZ
+  src/ui/                écrans : Instance, Générer, BD, Galerie, Journal, Clés
   public/workflows/      workflows ComfyUI au format API (convertis des templates officiels)
   public/models.json     correspondance nœuds/champs, options supportées, valeurs par défaut
 worker/                  Cloudflare Worker (proxy Vast sans état) + wrangler.jsonc
@@ -250,13 +254,67 @@ images par seconde, résolutions, son, images de début, intermédiaire et de fi
 repli (utile sur Safari iOS). Le modèle image → vidéo de la même famille est pré-rempli, ainsi que le prompt, la
 résolution et la durée. Le résultat se place juste après l'original dans la timeline.
 
-## 6. Coûts
+## 6. Studio BD
+
+Onglet **BD** : une bande dessinée complète, de l'histoire aux planches, avec **tes personnages** dessinés de façon
+cohérente sur chaque case.
+
+**Avant de louer**, coche dans *Instance → Réglages de location* :
+
+| Famille | Rôle | Poids |
+|---|---|---|
+| **Studio BD : FLUX.2 Dev** | dessine les cases ; jusqu'à 4 images de référence par case | ≈ 57 Go : FLUX.2 Dev fp8, encodeur Mistral 3 Small fp8, VAE FLUX.2, LoRA Turbo |
+| **Studio BD : IA d'écriture Qwen 3.5 4B** | découpe l'histoire, décrit tes personnages | ≈ 9 Go |
+
+Ajoute LTX-2.5 si tu veux aussi faire de la vidéo sur la même instance. Le disque proposé grandit tout seul
+(150 Go pour les deux familles BD seules). Prends de préférence un GPU de **48 Go ou plus** (RTX PRO 6000) : sur 32 Go
+(RTX 5090), ComfyUI décharge une partie du modèle en mémoire système, ce qui marche mais plus lentement.
+
+**Étapes (dans l'onglet BD) :**
+
+1. **Projet** : *Nouveau*. Tes projets sont rangés **dans le téléphone** (IndexedDB), **chiffrés** en AES-GCM avec
+   une clé aléatoire gardée dans le coffre. Sans la phrase de passe, ils sont illisibles. *Tout effacer* (écran Clés)
+   les supprime aussi. Avec « ne pas mémoriser », les projets ne survivent pas à la fermeture de l'onglet.
+2. **Personnages** : pour chacun, un nom et **1 à 3 images de référence** nettes (visage et tenue visibles).
+   - **Décrire avec l'IA** : Qwen 3.5 regarde l'image et écrit une description précise (âge, cheveux, tenue,
+     couleurs…). Tu peux la corriger.
+   - **Planche de poses** : FLUX.2 dessine le personnage de face, de trois quarts, de profil et de dos. La planche
+     est ajoutée à ses références, ce qui renforce la cohérence.
+3. **Style** : franco-belge, manga, comics, webtoon, aquarelle, polar, cartoon, réaliste, plus tes précisions.
+   - **Image de style** (facultative) : une case d'un album dont tu veux le trait et les couleurs, mais pas le contenu.
+   - **Rapide** : FLUX.2 Turbo, 8 étapes. Décoche-le pour la version finale (20 étapes).
+4. **Histoire** : écris le synopsis, choisis 1 à 8 pages, puis **Découper avec l'IA**. Qwen 3.5 propose les pages
+   et les cases (3 à 6 par page), le cadrage, les personnages présents, les **dialogues et récitatifs en français**.
+5. **Pages** : aperçu de la planche, mise en page (8 gabarits, de la pleine page au gaufrier de 6), et pour
+   chaque case : description, personnages présents, cadrage et bulles (réplique, pensée, récitatif).
+   - **Générer les cases vides** dessine toute la page ; **Régénérer** refait une case avec une nouvelle seed.
+   - Chaque case est générée **au format exact de son emplacement** (≈ 1 mégapixel).
+   - Les bulles se déplacent au doigt avec la poignée ✥.
+6. **Export** : **PDF A4**, **CBZ** (liseuses de BD, avec `ComicInfo.xml`) ou **PNG** page par page. Les fichiers
+   sont fabriqués dans le téléphone.
+
+**Comment la cohérence est obtenue.** Pour chaque case, les images de référence des personnages présents sont
+envoyées à FLUX.2 Dev par sa chaîne officielle `ReferenceLatent`. Les références sont prises dans cet ordre : la 1ʳᵉ
+image de chaque personnage, puis ses autres images (planche de poses…), puis l'image de style. Le prompt relie chaque
+nom à ses références (« Léa is the character shown in reference images 1 and 3… ») et rappelle sa description.
+
+**Le texte n'est jamais dessiné par le modèle.** Les bulles sont tracées par le navigateur avec la police libre
+Comic Neue (OFL), servie par le site. Les accents sont donc exacts, et une faute se corrige sans régénérer l'image.
+
+**Téléphone en veille :** comme pour les vidéos, une case en cours continue sur l'instance. Elle est récupérée au
+réveil, ou à la réouverture de l'onglet, et rangée dans son projet. Les images sont supprimées de l'instance dès
+qu'elles sont récupérées. Les images de référence envoyées sont effacées au bout de 2 h.
+
+**Licence :** FLUX.2 [dev] est publié par Black Forest Labs sous une **licence non commerciale**. Lis-la avant tout
+usage commercial de tes planches.
+
+## 7. Coûts
 
 | Poste | Quand | Ordre de grandeur |
 |---|---|---|
 | GPU + machine (`dph_total`) | à la seconde, **tant que l'instance tourne** (y compris pendant l'installation) | affiché sur chaque offre et dans la confirmation ; RTX PRO 6000 plus chère que RTX 5090 |
 | Stockage du disque | **tout le temps** tant que l'instance existe, **même arrêtée** | affiché dans l'onglet Instance quand elle est arrêtée (≈ prix/Go/mois × taille ÷ 30 par jour) |
-| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 52 Go (LTX-2.5), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan ; familles de test : ≈ 10 Go (Wan 2.1 1.3B) ou ≈ 18 Go (Wan 2.2 5B) |
+| Bande passante | selon l'hôte (certains facturent le téléchargement) | le 1er démarrage télécharge ≈ 52 Go (LTX-2.5), environ 70 Go de plus pour Wan, 45 Go pour Hunyuan ; familles de test : ≈ 10 Go (Wan 2.1 1.3B) ou ≈ 18 Go (Wan 2.2 5B) ; Studio BD : ≈ 57 Go (FLUX.2 Dev) + 9 Go (Qwen 3.5) |
 
 - **Le bandeau de coût** en haut de l'écran donne la durée allumée et le coût estimé de la session (prix/h × durée).
 - **Le crédit Vast restant** est affiché dans l'onglet Instance.
@@ -264,7 +322,7 @@ résolution et la durée. Le résultat se place juste après l'original dans la 
 - **Le watchdog** (20 min de file vide, 4 h maximum) se règle dans *Réglages de location*. La valeur 0 le désactive (déconseillé).
 - **Une instance arrêtée peut ne pas redémarrer** si quelqu'un d'autre loue le GPU entre-temps : elle reste en attente. Détruis-la et loue une autre offre.
 
-## 7. Modèles disponibles et ajout d'un modèle
+## 8. Modèles disponibles et ajout d'un modèle
 
 Les workflows sont **convertis des templates officiels ComfyUI** (paquet `comfyui-workflow-templates` 0.11.103,
 installé avec ComfyUI v0.44.2), sans modification. La conversion passe par le frontend officiel (« Export API »).
@@ -283,6 +341,8 @@ Chaque combinaison d'options que l'interface peut produire a été **validée pa
 | `wan21-1.3b-t2v` | `text_to_video_wan.json` | **Test minimal** Wan 2.1 1.3B (≈ 10 Go) : modèle 1.3B fp16, umt5 fp8, VAE 2.1 ; 480p, 1 à 5 s |
 | `wan22-5b-t2v` | `video_wan2_2_5B_ti2v.json` | **Test léger** Wan 2.2 5B (≈ 18 Go) : TI2V 5B fp16, umt5 fp8, VAE 2.2 ; 480p ou 720p |
 | `wan22-5b-i2v` | `video_wan2_2_5B_ti2v.json`, nœud « image de début » activé (désactivé par défaut dans le template) | Test léger Wan 2.2 5B |
+| `flux2-dev-ref` (Studio BD) | `image_flux2_fp8.json` ; la chaîne `ReferenceLatent` est reconstruite pour 0 à 4 références | FLUX.2 Dev (≈ 57 Go) |
+| `qwen35-text` (Studio BD) | `llm_qwen3_5_text_gen.json` ; l'image est retirée quand il n'y en a pas | Qwen 3.5 4B (≈ 9 Go) |
 
 Les noms de fichiers et les dépôts Hugging Face viennent des templates eux-mêmes (`instance/weights.json`). Pour
 installer Wan ou Hunyuan, coche la famille dans *Réglages de location* **avant** de louer. Le disque est augmenté
@@ -314,7 +374,7 @@ de ses fichiers de poids.
 (`web/src/core/settings.ts`, `web/public/models.json`). Reconvertis ensuite les templates (étape 2) et revalide
 (étape 4). Une instance existante suit la version de son interface d'origine : détruis-la et recrée-la pour en profiter.
 
-## 8. Dépannage
+## 9. Dépannage
 
 Commence toujours par **Journal → Copier** : il contient chaque requête (méthode, URL, code HTTP, durée), les
 réponses d'erreur, les lignes de démarrage publiées par l'instance et, via **Logs de l'instance**, la fin de
@@ -338,7 +398,7 @@ réponses d'erreur, les lignes de démarrage publiées par l'instance et, via **
 | Arrêtée toute seule | watchdog (inactivité ou durée max) | Normal. Le motif s'affiche dans l'onglet Instance. **Démarrer** pour reprendre. |
 | Phrase de passe oubliée | le coffre est indéchiffrable sans elle | **Tout effacer**, puis ressaisis les clés. Tes instances Vast ne sont pas touchées. |
 
-## 9. Sécurité : risques et protections
+## 10. Sécurité : risques et protections
 
 **Risques à connaître :**
 
@@ -373,7 +433,7 @@ réponses d'erreur, les lignes de démarrage publiées par l'instance et, via **
 - Les **scripts exécutés sur la machine GPU** sont vérifiés par SHA-256, au commit exact de l'interface, ainsi que Caddy et cloudflared.
 - **Aucun secret dans le dépôt** : le scan gitleaks tourne en CI à chaque push, avec une exception uniquement pour les valeurs factices des tests.
 
-## 10. Développement et tests
+## 11. Développement et tests
 
 Prérequis : Node 22, Python 3.10+, Chromium de Playwright.
 
@@ -390,6 +450,7 @@ Avec les mocks :
 - clé Vast de test : `test-vast-key-0123456789abcdef` ;
 - token Hugging Face de test : `hf_TestToken0123456789abcdef` ;
 - mots-clés dans le prompt : `#oom` (manque de mémoire GPU), `#missing` (nœud manquant), `#slow` (génération longue, pour tester l'annulation).
+- Studio BD : le mock renvoie une image PNG pour chaque case et un faux Qwen 3.5 (description, ou découpage JSON).
 
 Les tests de bout en bout couvrent :
 - clés et coffre : saisie, test et chiffrement des clés ; phrase de passe fausse ; verrouillage ; « ne pas mémoriser » ; tout effacer ;
@@ -400,14 +461,19 @@ Les tests de bout en bout couvrent :
 - erreurs : manque de mémoire GPU (OOM), nœud manquant, annulation ;
 - Journal : aucun secret en clair ;
 - instance : arrêt, redémarrage, destruction, reprise d'une instance arrêtée ;
-- rappel avant de fermer l'onglet.
+- rappel avant de fermer l'onglet ;
+- Studio BD : projet chiffré, personnage décrit par l'IA, découpage, cases avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque.
 
-## 11. Ce qui a été vérifié, ce qui ne l'a pas été
+Validation des requêtes BD (0 à 4 références sur les 8 gabarits, Qwen avec et sans image) contre un vrai ComfyUI :
+`COMFY=http://127.0.0.1:8188 node tools/validate-comic.mjs`.
+
+## 12. Ce qui a été vérifié, ce qui ne l'a pas été
 
 **Vérifié pendant le développement :**
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
 - **Workflows** : les 10 workflows et 92 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
+- **Studio BD** : les 18 requêtes types (FLUX.2 Dev avec 0 à 4 références, Qwen 3.5 avec et sans image) sont acceptées par ComfyUI v0.44.2 ; le PDF et le CBZ produits sont relus par des outils standards.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).
 - **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, testés contre de faux serveurs.
@@ -420,5 +486,6 @@ Les tests de bout en bout couvrent :
 - **Hugging Face depuis le navigateur** : la réponse CORS de `huggingface.co`. Si elle bloque le test, l'interface le signale et l'instance vérifie le token elle-même.
 - **Génération sur GPU** : vitesse réelle et consommation mémoire des modèles sur RTX PRO 6000 ou RTX 5090.
 - **Tunnel** : la stabilité des tunnels `trycloudflare.com` sur la durée.
+- **Studio BD sur GPU** : temps par case, qualité de la ressemblance avec tes références, et qualité du découpage JSON de Qwen 3.5. Si la réponse de Qwen est illisible, l'interface le dit et tu peux relancer.
 
 Si quelque chose échoue, colle-moi le **Journal** (bouton **Copier**) : je corrigerai à partir de là.

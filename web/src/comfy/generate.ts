@@ -11,7 +11,7 @@ import { HttpError } from '../core/http.ts';
 import { addPending, removePending, type PendingJob } from '../core/pending.ts';
 import type { ComfyClient, FileRef, HistoryEntry } from './client.ts';
 import { explainError, explainExecutionError, type ReadableError } from './errors.ts';
-import { buildPrompt, findEnhancedPrompt, findVideoOutputs, type ApiPrompt, type GenParams, type ModelDef, type Registry } from '../workflows/build.ts';
+import { buildPrompt, findEnhancedPrompt, findImageOutputs, findVideoOutputs, type ApiPrompt, type GenParams, type ModelDef, type Registry } from '../workflows/build.ts';
 
 export interface GenProgress {
   /** Fraction globale estimée (0..1). */
@@ -39,6 +39,8 @@ export interface GenResult {
   elapsedMs: number;
   /** Prompt réellement utilisé par le modèle (après amélioration par Gemma), si disponible. */
   enhancedPrompt: string | null;
+  /** Texte produit (workflows de type « text », ex. Qwen 3.5). */
+  text?: string;
 }
 
 export class GenerationError extends Error {
@@ -54,8 +56,19 @@ export class GenerationError extends Error {
 export interface GenInput {
   client: ComfyClient;
   registry: Registry;
-  model: ModelDef;
+  model: Pick<ModelDef, 'id' | 'label'> & Partial<ModelDef>;
   workflow: ApiPrompt;
+  /** Workflow déjà construit (Studio BD) : reçoit les noms des images envoyées et le préfixe de sortie. */
+  prebuilt?: (uploaded: string[], outputPrefix: string) => ApiPrompt;
+  /** Images à envoyer pour un workflow « prebuilt » (références de personnages, style…). */
+  uploads?: Blob[];
+  /** Nature du résultat : vidéo (défaut), image, ou texte lu dans un nœud PreviewAny. */
+  kind?: 'video' | 'image' | 'text';
+  textNode?: string;
+  /** Mémoriser la génération pour la reprendre après fermeture de l'onglet (défaut : oui). */
+  persist?: boolean;
+  /** Informations libres gardées avec la génération mémorisée (ex. projet et case de BD). */
+  meta?: Record<string, unknown>;
   params: Omit<GenParams, 'startImage' | 'endImage' | 'middleImage' | 'outputPrefix'>;
   startImage?: Blob | null;
   endImage?: Blob | null;
@@ -159,15 +172,26 @@ export class Generation {
     }
     if (this.cancelled) throw new GenerationError({ title: 'Génération annulée', hint: '' }, true);
 
+    const extraNames: string[] = [];
+    for (const [i, blob] of (this.input.uploads ?? []).entries()) {
+      this.status(`Envoi des images de référence (${i + 1}/${this.input.uploads!.length})…`);
+      const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png';
+      const ref = await client.uploadImage(blob, `vg_${randomToken(9)}.${ext}`);
+      this.uploaded.push(ref);
+      extraNames.push(ref.subfolder ? `${ref.subfolder}/${ref.filename}` : ref.filename);
+    }
+    if (this.cancelled) throw new GenerationError({ title: 'Génération annulée', hint: '' }, true);
     this.outputPrefix = `videogen/${model.id}_${Date.now()}`;
-    const prompt = buildPrompt(registry, model, workflow, { ...params, startImage: names.start, endImage: names.end, middleImage: names.middle, outputPrefix: this.outputPrefix });
+    const prompt = this.input.prebuilt
+      ? this.input.prebuilt(extraNames, this.outputPrefix)
+      : buildPrompt(registry, model as ModelDef, workflow, { ...params, startImage: names.start, endImage: names.end, middleImage: names.middle, outputPrefix: this.outputPrefix });
     this.indexWorkflow(prompt);
 
     this.status('Envoi du workflow…');
-    journal.info('génération', `Lancement ${model.label} — ${params.preset} ${params.ratio}, ${params.duration} s à ${params.fps} i/s, seed ${params.seed}`);
+    journal.info('génération', this.input.prebuilt ? `Lancement ${model.label}` : `Lancement ${model.label} — ${params.preset} ${params.ratio}, ${params.duration} s à ${params.fps} i/s, seed ${params.seed}`);
     const res = await client.prompt(prompt, this.clientId);
     this.promptId = res.prompt_id;
-    addPending({
+    if (this.input.persist !== false) addPending({
       promptId: res.prompt_id,
       instanceId: this.input.instanceId,
       modelId: model.id,
@@ -176,6 +200,9 @@ export class Generation {
       uploaded: this.uploaded,
       startedAt: this.t0,
       parentId: this.input.parentId,
+      kind: this.input.kind,
+      textNode: this.input.textNode,
+      meta: this.input.meta,
     });
     this.input.events?.onQueued?.(res.prompt_id);
     journal.info('génération', `Prompt accepté (id ${res.prompt_id}, position ${res.number}) — la génération continue sur l’instance même si le téléphone se met en veille`);
@@ -372,7 +399,9 @@ export class Generation {
         return;
       }
       // Ni dans la file ni dans l'historique : ComfyUI a peut-être redémarré. La vidéo existe-t-elle ?
-      const files = (await this.input.client.listOutputs(this.outputPrefix)).filter((f) => /\.(mp4|webm|mov|mkv|gif)$/i.test(f.filename));
+      const files = (await this.input.client.listOutputs(this.outputPrefix)).filter((f) =>
+        this.input.kind === 'image' ? /\.(png|jpe?g|webp)$/i.test(f.filename) : /\.(mp4|webm|mov|mkv|gif)$/i.test(f.filename),
+      );
       if (files.length) {
         journal.info('génération', 'Résultat retrouvé sur l’instance d’après son nom de fichier');
         await this.deliver(files);
@@ -400,8 +429,25 @@ export class Generation {
       if (h.status.messages.some((m) => m[0] === 'execution_interrupted')) return this.fail(new GenerationError({ title: 'Génération annulée', hint: '' }, true));
       return this.fail(new GenerationError({ title: 'Échec de la génération', hint: 'Voir le Journal.' }));
     }
-    const files = findVideoOutputs(h.outputs);
-    if (!files.length) return this.fail(new GenerationError({ title: 'Aucune vidéo produite', hint: 'Le workflow s’est terminé sans sortie vidéo.' }));
+    if (this.input.kind === 'text') {
+      const text = findEnhancedPrompt(h.outputs, this.input.textNode);
+      if (text === null) return this.fail(new GenerationError({ title: 'Aucun texte produit', hint: 'Le modèle de langage n’a rien renvoyé.' }));
+      this.succeed({
+        blob: new Blob([text], { type: 'text/plain' }),
+        file: { filename: '', subfolder: '', type: 'output' },
+        promptId: this.promptId!,
+        seed: this.input.params.seed,
+        modelId: this.input.model.id,
+        params: { ...this.input.params, outputPrefix: '' },
+        elapsedMs: Date.now() - this.t0,
+        enhancedPrompt: null,
+        text,
+      });
+      if (this.uploaded.length) void this.input.client.deleteFiles(this.uploaded).catch(() => undefined);
+      return;
+    }
+    const files = this.input.kind === 'image' ? findImageOutputs(h.outputs) : findVideoOutputs(h.outputs);
+    if (!files.length) return this.fail(new GenerationError({ title: this.input.kind === 'image' ? 'Aucune image produite' : 'Aucune vidéo produite', hint: 'Le workflow s’est terminé sans sortie.' }));
     this.enhancedPrompt = findEnhancedPrompt(h.outputs, this.input.model.enhancedPromptNode);
     await this.deliver(files);
   }
@@ -411,12 +457,12 @@ export class Generation {
     if (this.finished || this.delivering) return;
     this.delivering = true;
     try {
-      this.status('Téléchargement de la vidéo…');
+      this.status(this.input.kind === 'image' ? 'Téléchargement de l’image…' : 'Téléchargement de la vidéo…');
       this.input.events?.onProgress?.({ overall: 0.995, label: 'Téléchargement' });
       const file = files[files.length - 1];
       const blob = await this.input.client.view(file);
       this.succeed({
-        blob: blob.type ? blob : new Blob([blob], { type: 'video/mp4' }),
+        blob: blob.type ? blob : new Blob([blob], { type: this.input.kind === 'image' ? 'image/png' : 'video/mp4' }),
         file,
         promptId: this.promptId!,
         seed: this.input.params.seed,

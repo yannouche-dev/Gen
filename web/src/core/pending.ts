@@ -14,6 +14,9 @@ export interface PendingJob {
   uploaded: FileRef[];
   startedAt: number;
   parentId?: string;
+  kind?: 'video' | 'image' | 'text';
+  textNode?: string;
+  meta?: Record<string, unknown>;
 }
 
 const KEY = 'videogen.pending.v1';

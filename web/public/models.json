@@ -30,6 +30,18 @@
       "approxGB": 18,
       "default": false,
       "note": "≈ 18 Go : permet aussi de tester « Prolonger » (image → vidéo)."
+    },
+    "flux2dev": {
+      "label": "Studio BD : FLUX.2 Dev (images, personnages de référence)",
+      "approxGB": 57,
+      "default": false,
+      "note": "Génère les cases de BD avec tes personnages de référence."
+    },
+    "qwen35": {
+      "label": "Studio BD : IA d’écriture Qwen 3.5 4B",
+      "approxGB": 9,
+      "default": false,
+      "note": "Découpe ton histoire en pages et cases, décrit tes personnages."
     }
   },
   "resolutionPresets": {

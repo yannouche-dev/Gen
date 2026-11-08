@@ -9,6 +9,8 @@ export interface Secrets {
   hfToken?: string;
   /** Jeton d'accès ComfyUI par identifiant d'instance Vast. */
   comfyTokens?: Record<string, string>;
+  /** Clé AES (256 bits, base64) des projets de BD chiffrés dans IndexedDB. */
+  projectsKey?: string;
 }
 
 interface Stored {
@@ -163,6 +165,12 @@ export class Vault {
 
   /** Efface tout : coffre chiffré, réglages, préréglages, état local. */
   wipe(): void {
+    // Projets de BD (IndexedDB) : effacés aussi.
+    try {
+      globalThis.indexedDB?.deleteDatabase('videogen-bd');
+    } catch {
+      /* indisponible */
+    }
     const st = storage();
     if (st) {
       const keys: string[] = [];

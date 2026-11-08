@@ -59,6 +59,9 @@ function videogenPlugin(): Plugin {
       for (const f of fs.readdirSync(esm)) if (f.endsWith('.js')) pairs.push([path.join(esm, f), path.join(vendor, 'ffmpeg', f)]);
       const core = path.join(ROOT, 'node_modules/@ffmpeg/core/dist/esm');
       for (const f of ['ffmpeg-core.js', 'ffmpeg-core.wasm']) pairs.push([path.join(core, f), path.join(vendor, 'ffmpeg-core', f)]);
+      // Police des bulles de BD (Comic Neue, licence OFL), servie depuis le site.
+      const fonts = path.join(ROOT, 'node_modules/@fontsource/comic-neue/files');
+      for (const w of ['400', '700']) pairs.push([path.join(fonts, `comic-neue-latin-${w}-normal.woff2`), path.join(vendor, 'fonts', `comic-neue-${w}.woff2`)]);
       for (const [from, to] of pairs) {
         fs.mkdirSync(path.dirname(to), { recursive: true });
         if (!fs.existsSync(to) || fs.statSync(to).size !== fs.statSync(from).size) fs.copyFileSync(from, to);

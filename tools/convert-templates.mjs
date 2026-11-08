@@ -24,6 +24,8 @@ const MODELS_DIR = process.env.COMFY_MODELS_DIR;
 // Option enable : types de nœuds présents dans le template mais désactivés (« bypass ») par défaut, à activer
 // (ex. l'image de début du template Wan 2.2 5B « TI2V », prévu pour les deux usages).
 export const TEMPLATES = {
+  'flux2-dev-ref': ['image_flux2_fp8.json', 'flux2dev'],
+  'qwen35-text': ['llm_qwen3_5_text_gen.json', 'qwen35'],
   'wan21-1.3b-t2v': ['text_to_video_wan.json', 'wan21s'],
   'wan22-5b-t2v': ['video_wan2_2_5B_ti2v.json', 'wan22s'],
   'wan22-5b-i2v': ['video_wan2_2_5B_ti2v.json', 'wan22s', { enable: ['LoadImage'] }],
@@ -41,6 +43,8 @@ const FAMILY_LABELS = {
   hunyuan15: 'HunyuanVideo 1.5 (720p)',
   wan21s: 'Test minimal : Wan 2.1 1.3B',
   wan22s: 'Test léger : Wan 2.2 5B',
+  flux2dev: 'Studio BD : FLUX.2 Dev',
+  qwen35: 'Studio BD : IA d’écriture Qwen 3.5 4B',
 };
 
 function walkNodes(wf) {

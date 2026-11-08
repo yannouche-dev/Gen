@@ -315,3 +315,18 @@ export function findVideoOutputs(outputs: Record<string, Record<string, unknown>
   }
   return out;
 }
+
+/** Images produites (SaveImage) dans une entrée d'historique. */
+export function findImageOutputs(outputs: Record<string, Record<string, unknown>>): { filename: string; subfolder: string; type: string }[] {
+  const out: { filename: string; subfolder: string; type: string }[] = [];
+  for (const o of Object.values(outputs)) {
+    const arr = o.images;
+    if (!Array.isArray(arr)) continue;
+    for (const f of arr as { filename?: string; subfolder?: string; type?: string }[]) {
+      if (f?.filename && /\.(png|jpe?g|webp)$/i.test(f.filename) && (f.type ?? 'output') === 'output') {
+        out.push({ filename: f.filename, subfolder: f.subfolder ?? '', type: f.type ?? 'output' });
+      }
+    }
+  }
+  return out;
+}
