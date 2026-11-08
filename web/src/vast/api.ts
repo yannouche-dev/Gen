@@ -107,6 +107,7 @@ export class VastApi {
         cat: 'vast',
         headers: this.headers(),
         quiet,
+        soft: quiet,
       });
       out.push(...(res.instances ?? []));
       after = res.next_token || null;
@@ -122,6 +123,7 @@ export class VastApi {
         cat: 'vast',
         headers: this.headers(),
         quiet,
+        soft: quiet,
         silentStatuses: [410],
       });
       return res.instances ?? null;
@@ -150,14 +152,14 @@ export class VastApi {
     if (opts.filter) body.filter = opts.filter;
     const res = await requestJson<{ success?: boolean; result_url?: string; msg?: string }>(
       `${this.base}/api/v0/instances/request_logs/${id}/`,
-      { cat: 'vast', method: 'PUT', headers: this.headers(), json: body, quiet: true },
+      { cat: 'vast', method: 'PUT', headers: this.headers(), json: body, quiet: true, soft: true },
     );
     if (!res.result_url) throw new HttpError('http', res.msg || 'Pas d’URL de logs', this.base);
     const url = `${this.base}/logs?url=${encodeURIComponent(res.result_url)}`;
     for (let i = 0; i < 15; i++) {
       await new Promise((r) => setTimeout(r, i === 0 ? 700 : 1000));
       try {
-        const r = await request(url, { cat: 'vast', quiet: true, timeoutMs: 15000, silentStatuses: [403, 404] });
+        const r = await request(url, { cat: 'vast', quiet: true, soft: true, timeoutMs: 15000, silentStatuses: [403, 404] });
         return await r.text();
       } catch (e) {
         if (!(e instanceof HttpError) || (e.status !== 403 && e.status !== 404)) throw e;

@@ -55,7 +55,7 @@ export class ComfyClient {
   }
 
   agentStatus(quiet = true): Promise<AgentStatus> {
-    return requestJson(`${this.base}/videogen/status`, { cat: 'instance', headers: this.h(), quiet, timeoutMs: 15000 });
+    return requestJson(`${this.base}/videogen/status`, { cat: 'instance', headers: this.h(), quiet, soft: quiet, timeoutMs: 15000 });
   }
   agentLog(tail = 200): Promise<{ lines: string[] }> {
     return requestJson(`${this.base}/videogen/log?tail=${tail}`, { cat: 'instance', headers: this.h() });

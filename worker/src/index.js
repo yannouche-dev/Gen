@@ -11,7 +11,13 @@
 //   LOG_URL_PREFIXES  (tests uniquement) préfixes d'URL de logs autorisés, séparés par des virgules
 
 const DEFAULT_VAST_BASE = 'https://console.vast.ai';
-const DEFAULT_LOG_PREFIXES = ['https://s3.amazonaws.com/vast.ai/instance_logs/'];
+// Vast renvoie aujourd'hui des URL dans le seau « public.vast.ai » (constaté en réel), la documentation
+// mentionne « vast.ai » : les deux sont acceptés, rien d'autre.
+const DEFAULT_LOG_PREFIXES = [
+  'https://s3.amazonaws.com/public.vast.ai/instance_logs/',
+  'https://s3.amazonaws.com/vast.ai/instance_logs/',
+];
+const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
 const MAX_BODY = 64 * 1024;
 
 /** Routes Vast autorisées : [méthode, motif du chemin]. */
@@ -75,11 +81,30 @@ async function relay(upstreamUrl, init, origin) {
   }
   headers.set('Cache-Control', 'no-store');
   for (const [k, v] of Object.entries(corsHeaders(origin))) headers.set(k, v);
-  return new Response(resp.body, { status: resp.status, headers });
+  return new Response(NULL_BODY_STATUS.has(resp.status) ? null : resp.body, { status: resp.status, headers });
 }
 
 export default {
+  // Toute exception est convertie en réponse JSON avec CORS : sinon le navigateur ne voit qu'un
+  // « Failed to fetch » opaque (page d'erreur Cloudflare sans en-têtes CORS).
   async fetch(request, env) {
+    try {
+      return await handle(request, env);
+    } catch (e) {
+      let allowed = '';
+      try {
+        allowed = (env.ALLOWED_ORIGIN || '').trim();
+      } catch {
+        /* configuration illisible : réponse sans CORS */
+      }
+      const ok = allowed && request.headers.get('Origin') === allowed;
+      return json(502, { error: 'proxy_exception', msg: String(e && e.message ? e.message : e).slice(0, 300) }, ok ? allowed : null);
+    }
+  },
+};
+
+async function handle(request, env) {
+  {
     const allowed = (env.ALLOWED_ORIGIN || '').trim();
     const origin = request.headers.get('Origin');
     if (!allowed || origin !== allowed) {
@@ -121,5 +146,5 @@ export default {
     const headers = { Authorization: auth, Accept: 'application/json' };
     if (body) headers['Content-Type'] = 'application/json';
     return relay(base + url.pathname + url.search, { method: request.method, headers, body }, allowed);
-  },
-};
+  }
+}

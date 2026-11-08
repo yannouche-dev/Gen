@@ -39,6 +39,32 @@ describe('Worker proxy Vast', () => {
     expect((await call('/logs?url=' + encodeURIComponent('https://evil.example/x.log'))).status).toBe(400);
     expect((await call('/logs?url=' + encodeURIComponent('https://s3.amazonaws.com/vast.ai/instance_logs/../../x'))).status).toBe(400);
   });
+  it('accepte les logs du seau public.vast.ai (constaté en réel) et convertit les exceptions en JSON + CORS', async () => {
+    const orig = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input instanceof Request ? input.url : input));
+      return new Response('VIDEOGEN_BOOT=1\n', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+    }) as typeof fetch;
+    try {
+      const u = 'https://s3.amazonaws.com/public.vast.ai/instance_logs/8affd769f4f2062e2c109732b8b4eb513e1c74314ffc7293c76416f52fe8c3cd.log';
+      const r = await call('/logs?url=' + encodeURIComponent(u));
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain('VIDEOGEN_BOOT');
+      expect(seen[0]).toBe(u);
+      globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+      expect((await call('/api/v0/users/current/', { headers: { Authorization: 'Bearer abcdefgh123' } })).status).toBe(204);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    const broken = await worker.fetch(new Request('https://proxy.example/api/v0/users/current/', { headers: { Origin: ORIGIN } }), {
+      get ALLOWED_ORIGIN(): string {
+        throw new Error('boom');
+      },
+    } as unknown as { ALLOWED_ORIGIN: string });
+    expect(broken.status).toBe(502);
+  });
+
   it('relaie vers Vast avec la clé, sans cookie, avec CORS', async () => {
     const seen: Request[] = [];
     const orig = globalThis.fetch;

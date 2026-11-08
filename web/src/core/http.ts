@@ -39,6 +39,8 @@ export interface RequestOptions {
   quiet?: boolean;
   /** Codes HTTP attendus pendant un sondage : pas d'erreur au Journal. */
   silentStatuses?: number[];
+  /** Sondage réessayé automatiquement : coupure réseau ou délai notés en simple avertissement. */
+  soft?: boolean;
   signal?: AbortSignal;
 }
 
@@ -72,14 +74,14 @@ export async function request(url: string, opts: RequestOptions): Promise<Respon
   } catch (e) {
     const ms = Math.round(performance.now() - t0);
     if (ctrl.signal.aborted && !opts.signal?.aborted) {
-      journal.error(opts.cat, `${label} → délai dépassé (${ms} ms)`);
+      (opts.soft ? journal.warn : journal.error)(opts.cat, `${label} → délai dépassé (${ms} ms)${opts.soft ? ' — nouvelle tentative automatique' : ''}`);
       throw new HttpError('timeout', `Délai dépassé (${Math.round(timeout / 1000)} s)`, url);
     }
     if (opts.signal?.aborted) throw new HttpError('aborted', 'Requête annulée', url);
     const msg = e instanceof Error ? e.message : String(e);
-    journal.error(
+    (opts.soft ? journal.warn : journal.error)(
       opts.cat,
-      `${label} → échec réseau (${ms} ms)`,
+      `${label} → échec réseau (${ms} ms)${opts.soft ? ' — nouvelle tentative automatique' : ''}`,
       `${msg}\nCauses possibles : serveur injoignable, tunnel coupé, blocage CORS ou CSP, réseau mobile instable.`,
     );
     throw new HttpError('network', 'Serveur injoignable (réseau, tunnel ou CORS)', url);

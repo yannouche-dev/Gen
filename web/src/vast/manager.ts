@@ -105,6 +105,15 @@ export class InstanceManager {
     this.emit();
   }
   private setStep(id: string, state: StepView['state'], detail?: string, progress?: number) {
+    const prev = this.state.steps.find((s) => s.id === id);
+    if (prev && prev.state !== state) {
+      const text = `${prev.label} : ${state === 'done' ? 'terminé' : state === 'running' ? 'en cours' : state === 'error' ? 'ERREUR' : state}${detail ? ' — ' + detail : ''}`;
+      (state === 'error' ? journal.error : journal.info)('démarrage', text);
+    } else if (prev && id === 'models' && typeof progress === 'number') {
+      // Progression des téléchargements au Journal par paliers de 10 %.
+      const step = Math.floor(progress * 10);
+      if (step !== Math.floor((prev.progress ?? 0) * 10)) journal.info('démarrage', `Modèles : ${detail ?? Math.round(progress * 100) + ' %'}`);
+    }
     this.state = {
       ...this.state,
       steps: this.state.steps.map((s) => (s.id === id ? { ...s, state, detail: detail ?? s.detail, progress } : s)),
