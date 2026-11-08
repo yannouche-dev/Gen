@@ -29,6 +29,13 @@ interface FormState {
   fast: boolean;
   startImage: Blob | null;
   endImage: Blob | null;
+  middleImage: Blob | null;
+  /** Instant de l'image clé intermédiaire (secondes). */
+  middleAt: number;
+  /** Valeurs des options propres au modèle (son, fidélité à l'image, force des images clés…). */
+  extras: Record<string, number | boolean>;
+  /** Nombre de variantes à générer à la suite (seeds différentes). */
+  variants: number;
   parentId?: string;
 }
 
@@ -42,6 +49,7 @@ export class GenerateScreen {
   private gen: Generation | null = null;
   private previewUrl: string | null = null;
   private resuming = false;
+  private assistantOpen = false;
   private imageUrls: string[] = [];
 
   constructor() {
@@ -101,6 +109,11 @@ export class GenerateScreen {
       fast: m.params.fast?.default ?? false,
       startImage: m.params.startImage ? this.st?.startImage ?? null : null,
       endImage: m.params.endImage ? this.st?.endImage ?? null : null,
+      middleImage: m.params.middleImage ? this.st?.middleImage ?? null : null,
+      middleAt: this.st?.middleAt ?? Math.round((this.st?.duration ?? m.duration.default) / 2),
+      // Valeurs par défaut du modèle, en gardant celles déjà choisies pour une option de même nom (ex. son).
+      extras: Object.fromEntries((m.extras ?? []).map((x) => [x.key, this.st?.extras?.[x.key] ?? x.default])),
+      variants: this.st?.variants ?? 1,
     };
   }
 
@@ -115,6 +128,7 @@ export class GenerateScreen {
       randomSeed: p.params.seed === undefined,
       startImage: p.startImage ?? base.startImage,
       endImage: p.endImage ?? base.endImage,
+      extras: { ...base.extras, ...Object.fromEntries(Object.entries(p.params.extras ?? {}).filter(([k]) => k in base.extras)) },
       parentId: p.parentId,
     } as FormState;
     if (p.note) toast(p.note, 'info');
@@ -174,7 +188,7 @@ export class GenerateScreen {
     }
 
     // Images
-    const imageField = (key: 'startImage' | 'endImage', label: string, required: boolean) => {
+    const imageField = (key: 'startImage' | 'endImage' | 'middleImage', label: string, required: boolean) => {
       const input = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', class: 'input', 'data-testid': key }) as HTMLInputElement;
       const preview = h('div', { class: 'img-preview' });
       const show = () => {
@@ -247,7 +261,7 @@ export class GenerateScreen {
       return h('label', { class: 'check' }, c, ` ${p.label}`);
     };
     if (opts.fast) adv.push(boolField('fast', opts.fast));
-    if (opts.enhancePrompt) adv.push(boolField('enhancePrompt', opts.enhancePrompt));
+
     if (opts.steps && !st.fast) adv.push(numberField('steps', 'Étapes (steps)', opts.steps));
     if (opts.cfg && !st.fast) adv.push(numberField('cfg', 'CFG', opts.cfg));
     const seed = h('input', { type: 'number', class: 'input', min: 0, max: MAX_SEED, value: String(st.seed), id: 'seed', disabled: st.randomSeed, inputmode: 'numeric', 'data-testid': 'seed' }) as HTMLInputElement;
@@ -275,7 +289,7 @@ export class GenerateScreen {
     savePreset.addEventListener('click', () => {
       const name = window.prompt('Nom du préréglage', `${m.label.split('·')[0].trim()} ${st.preset} ${st.ratio}`)?.trim();
       if (!name) return;
-      const values: Record<string, unknown> = { prompt: st.prompt, negative: st.negative, preset: st.preset, ratio: st.ratio, duration: st.duration, fps: st.fps, steps: st.steps, cfg: st.cfg, enhancePrompt: st.enhancePrompt, fast: st.fast, seed: st.seed, randomSeed: st.randomSeed };
+      const values: Record<string, unknown> = { prompt: st.prompt, negative: st.negative, preset: st.preset, ratio: st.ratio, duration: st.duration, fps: st.fps, steps: st.steps, cfg: st.cfg, enhancePrompt: st.enhancePrompt, fast: st.fast, seed: st.seed, randomSeed: st.randomSeed, extras: { ...st.extras }, middleAt: st.middleAt, variants: st.variants };
       const all = loadPresets().filter((p) => !(p.modelId === m.id && p.name === name));
       all.push({ name, modelId: m.id, values } as GenPreset);
       savePresets(all);
@@ -293,21 +307,107 @@ export class GenerateScreen {
     const ready = app.manager.state.phase === 'ready' && !!app.manager.comfy;
     const submit = h('button', { type: 'submit', class: 'btn btn-primary btn-big', disabled: busy || !ready || (av && !av.ok), 'data-testid': 'generate' }, busy ? 'Génération en cours…' : 'Générer');
 
+    // Capacités du modèle choisi, d'après models.json
+    const caps: string[] = [`${m.duration.min}–${m.duration.max} s`, m.fps.options.length > 1 ? `${m.fps.options[0]}–${m.fps.options.at(-1)} i/s` : `${m.fps.options[0]} i/s`, m.resolution.presets.join(' · ')];
+    if (m.audio) caps.push('son généré');
+    if (opts.enhancePrompt) caps.push('amélioration du prompt');
+    if (opts.startImage) caps.push('image de début');
+    if (opts.middleImage) caps.push('image clé intermédiaire');
+    if (opts.endImage) caps.push('image de fin');
+    if (opts.steps) caps.push('steps / CFG');
+    const capsBox = h('div', { class: 'chips caps', 'data-testid': 'model-caps' }, ...caps.map((c) => h('span', { class: 'chip static' }, c)));
+
+    // Assistant de prompt : fragments en anglais (les modèles comprennent mieux l'anglais), ajoutés au prompt.
+    const addToPrompt = (frag: string) => {
+      const cur = prompt.value.trim().replace(/[.,;]$/, '');
+      prompt.value = cur ? `${cur}. ${frag}` : frag.charAt(0).toUpperCase() + frag.slice(1);
+      st.prompt = prompt.value;
+    };
+    const group = (title: string, items: [string, string][]) =>
+      h('div', { class: 'chip-group' }, h('span', { class: 'chip-title' }, title), h('div', { class: 'chips' }, ...items.map(([lab, frag]) => h('button', { type: 'button', class: 'chip', 'data-testid': `chip-${lab}`, on: { click: () => addToPrompt(frag) } }, lab))));
+    const assistant = h(
+      'details',
+      { class: 'assistant', 'data-testid': 'prompt-assistant', open: this.assistantOpen, on: { toggle: (e: Event) => (this.assistantOpen = (e.target as HTMLDetailsElement).open) } },
+      h('summary', null, 'Assistant de prompt'),
+      h('p', { class: 'hint' }, m.family === 'ltx25'
+        ? 'LTX-2.5 suit mieux un paragraphe précis : action principale, gestes, apparence, décor, mouvement de caméra, lumière, puis le son (bruits, musique, dialogues entre guillemets).'
+        : 'Décris l’action, le sujet, le décor, la caméra et la lumière, en anglais de préférence.'),
+      group('Caméra', [['Plan fixe', 'static camera'], ['Travelling avant', 'slow dolly-in towards the subject'], ['Travelling arrière', 'slow dolly-out revealing the scene'], ['Panoramique', 'smooth pan from left to right'], ['Orbite', 'the camera slowly orbits around the subject'], ['À l’épaule', 'handheld camera with subtle shake'], ['Drone', 'aerial drone shot gliding forward']]),
+      group('Cadrage', [['Gros plan', 'close-up shot'], ['Plan moyen', 'medium shot'], ['Plan large', 'wide establishing shot'], ['Contre-plongée', 'low-angle shot']]),
+      group('Lumière & style', [['Cinéma', 'cinematic lighting, shallow depth of field, film grain'], ['Heure dorée', 'warm golden hour sunlight'], ['Nuit néon', 'neon-lit night, reflections on wet ground'], ['Studio', 'soft studio lighting, clean background'], ['Ralenti', 'slow motion'], ['Documentaire', 'natural documentary style']]),
+      m.audio ? group('Son (LTX)', [['Ambiance', 'ambient sound: gentle wind and distant birds'], ['Musique', 'soft cinematic music in the background'], ['Dialogue', 'the character says: "…"'], ['Bruitages', 'realistic footsteps and cloth rustle']]) : null,
+    );
+
+    // Options propres au modèle (déclarées dans models.json : son, fidélité, force des images clés…)
+    const extraFields = (opts.extras ?? [])
+      .filter((x) => !x.dependsOn || (x.dependsOn === 'enhancePrompt' ? st.enhancePrompt : !!st.extras[x.dependsOn]))
+      .map((x) => {
+        if (x.type === 'bool') {
+          const c = h('input', { type: 'checkbox', checked: !!st.extras[x.key], id: `x-${x.key}`, 'data-testid': `extra-${x.key}` }) as HTMLInputElement;
+          c.addEventListener('change', () => (st.extras[x.key] = c.checked));
+          return h('div', { class: 'field' }, h('label', { class: 'check' }, c, ` ${x.label}`), x.help ? h('small', { class: 'hint' }, x.help) : null);
+        }
+        const val = h('span', { class: 'value' }, String(st.extras[x.key]));
+        const r = h('input', { type: 'range', min: x.min, max: x.max, step: x.step ?? 0.05, value: String(st.extras[x.key]), id: `x-${x.key}`, 'data-testid': `extra-${x.key}` }) as HTMLInputElement;
+        r.addEventListener('input', () => {
+          st.extras[x.key] = Number(r.value);
+          val.textContent = r.value;
+        });
+        return h('label', { class: 'field' }, h('span', { class: 'field-label' }, `${x.label} : `), val, r, x.help ? h('small', { class: 'hint' }, x.help) : null);
+      });
+    // L'option « créativité » dépend de la case « Améliorer le prompt » : on redessine quand elle change.
+    const enhanceBox = opts.enhancePrompt
+      ? (() => {
+          const c = h('input', { type: 'checkbox', checked: st.enhancePrompt, id: 'enhancePrompt', 'data-testid': 'enhancePrompt' }) as HTMLInputElement;
+          c.addEventListener('change', () => {
+            st.enhancePrompt = c.checked;
+            this.renderForm();
+          });
+          return h('div', { class: 'field' }, h('label', { class: 'check' }, c, ` ${opts.enhancePrompt!.label}`), h('small', { class: 'hint' }, 'Gemma réécrit et enrichit ton prompt avant la génération ; le prompt utilisé s’affiche avec le résultat.'));
+        })()
+      : null;
+    const modelOptions =
+      extraFields.length || enhanceBox
+        ? h('section', { class: 'model-options', 'data-testid': 'model-options' }, h('h3', null, `Options ${reg.families[m.family]?.label ?? ''}`), enhanceBox, ...extraFields)
+        : null;
+
+    // Image clé intermédiaire (LTX : images clés à n'importe quel instant)
+    let middleBox: HTMLElement | null = null;
+    if (opts.middleImage) {
+      const at = h('input', { type: 'range', min: 1, max: Math.max(1, st.duration - 1), step: 0.5, value: String(Math.min(st.middleAt, Math.max(1, st.duration - 1))), 'data-testid': 'middleAt' }) as HTMLInputElement;
+      const atVal = h('span', { class: 'value' }, `${at.value} s`);
+      at.addEventListener('input', () => {
+        st.middleAt = Number(at.value);
+        atVal.textContent = `${at.value} s`;
+      });
+      middleBox = h('div', null, imageField('middleImage', 'Image clé intermédiaire (facultative)', false), h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Instant de l’image intermédiaire : '), atVal, at));
+    }
+
+    // Variantes : plusieurs générations à la suite avec des seeds différentes
+    const variants = h('select', { class: 'input', id: 'variants', 'data-testid': 'variants' }) as HTMLSelectElement;
+    for (const n of [1, 2, 3, 4]) variants.append(h('option', { value: n, selected: n === st.variants }, n === 1 ? '1 vidéo' : `${n} variantes (seeds différentes)`));
+    variants.addEventListener('change', () => (st.variants = Number(variants.value)));
+
     replace(
       this.form,
       h('h1', null, 'Générer'),
       st.parentId ? h('p', { class: 'msg info' }, `Prolongation de ${st.parentId} : la dernière image sert d’image de début.`) : null,
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Modèle'), select),
+      capsBox,
       avMsg,
       h('div', { class: 'row' }, presetPick, savePreset, delPreset),
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Prompt *'), prompt),
+      assistant,
       negBox,
       opts.startImage ? imageField('startImage', 'Image de début', !!m.params.startImage?.required) : null,
+      middleBox,
       opts.endImage ? imageField('endImage', 'Image de fin', !!m.params.endImage?.required) : null,
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Résolution'), h('div', { class: 'row' }, presetSel, ratios), h('small', { class: 'hint', 'data-testid': 'size' }, `${size.width} × ${size.height}`)),
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Durée '), durLabel, dur),
       fpsField,
+      modelOptions,
       h('details', { class: 'advanced', open: false }, h('summary', null, 'Options avancées'), ...adv),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nombre de vidéos'), variants),
       submit,
     );
     this.form.onsubmit = (e) => {
@@ -325,35 +425,49 @@ export class GenerateScreen {
     if (!st.prompt.trim()) return toast('Écris un prompt', 'error');
     if (m.params.startImage?.required && !st.startImage) return toast('Ajoute une image de début', 'error');
     if (m.params.endImage?.required && !st.endImage) return toast('Ajoute une image de fin', 'error');
-    if (st.randomSeed) st.seed = randomSeed();
-    const params = {
-      prompt: st.prompt,
-      negative: st.negative ?? undefined,
-      preset: st.preset,
-      ratio: st.ratio,
-      duration: st.duration,
-      fps: st.fps,
-      seed: st.seed,
-      steps: st.steps ?? undefined,
-      cfg: st.cfg ?? undefined,
-      enhancePrompt: st.enhancePrompt,
-      fast: st.fast,
-    };
     const parentId = st.parentId;
     st.parentId = undefined;
-    await this.follow((events) => new Generation({
-      client: c,
-      registry: app.registry!,
-      model: m,
-      workflow: app.workflows.get(m.id)!,
-      params,
-      startImage: st.startImage,
-      endImage: st.endImage,
-      stallMinutes: app.settings.stallMinutes,
-      instanceId: inst.id,
-      parentId,
-      events,
-    }), { model: m, params, startImage: st.startImage, endImage: st.endImage, parentId, startedAt: Date.now() });
+    const total = Math.max(1, Math.min(4, st.variants));
+    const baseSeed = st.seed;
+    for (let i = 0; i < total; i++) {
+      // Variantes : nouvelle seed aléatoire, ou seed fixe + i pour des variantes reproductibles.
+      const seed = st.randomSeed ? randomSeed() : baseSeed + i;
+      if (st.randomSeed) st.seed = seed;
+      const params = {
+        prompt: st.prompt,
+        negative: st.negative ?? undefined,
+        preset: st.preset,
+        ratio: st.ratio,
+        duration: st.duration,
+        fps: st.fps,
+        seed,
+        steps: st.steps ?? undefined,
+        cfg: st.cfg ?? undefined,
+        enhancePrompt: st.enhancePrompt,
+        fast: st.fast,
+        extras: { ...st.extras },
+        middleAt: st.middleImage ? st.middleAt : undefined,
+      };
+      const outcome = await this.follow(
+        (events) =>
+          new Generation({
+            client: c,
+            registry: app.registry!,
+            model: m,
+            workflow: app.workflows.get(m.id)!,
+            params,
+            startImage: st.startImage,
+            endImage: st.endImage,
+            middleImage: st.middleImage,
+            stallMinutes: app.settings.stallMinutes,
+            instanceId: inst.id,
+            parentId: i === 0 ? parentId : undefined,
+            events,
+          }),
+        { model: m, params, startImage: st.startImage, endImage: st.endImage, middleImage: st.middleImage, parentId: i === 0 ? parentId : undefined, startedAt: Date.now(), label: total > 1 ? `Variante ${i + 1}/${total}` : '' },
+      );
+      if (outcome !== 'ok') break;
+    }
   }
 
   /** Reprend les générations lancées avant une mise en veille ou une fermeture de l'onglet. */
@@ -396,8 +510,8 @@ export class GenerateScreen {
   /** Affiche la progression d'une génération (nouvelle ou reprise) puis range le résultat dans la galerie. */
   private async follow(
     make: (events: GenEvents) => Generation,
-    ctx: { model: ModelDef; params: GalleryItem['params']; startImage: Blob | null; endImage: Blob | null; parentId?: string; startedAt: number },
-  ) {
+    ctx: { model: ModelDef; params: GalleryItem['params']; startImage: Blob | null; endImage: Blob | null; middleImage?: Blob | null; parentId?: string; startedAt: number; label?: string },
+  ): Promise<'ok' | 'cancelled' | 'error'> {
     const statusEl = h('p', { class: 'gen-status', 'data-testid': 'gen-status' }, 'Préparation…');
     const bar = h('progress', { max: 1, value: 0, 'data-testid': 'gen-bar' }) as HTMLProgressElement;
     const stepEl = h('p', { class: 'hint' });
@@ -405,7 +519,7 @@ export class GenerateScreen {
     const timer = h('span', { class: 'hint' });
     const note = h('p', { class: 'hint' }, 'La génération tourne sur l’instance : tu peux verrouiller le téléphone, le suivi reprendra au réveil.');
     const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-big', 'data-testid': 'cancel' }, 'Annuler');
-    replace(this.progressBox, h('h2', null, 'Génération'), statusEl, bar, stepEl, timer, img, note, cancel);
+    replace(this.progressBox, h('h2', null, ctx.label ? `Génération · ${ctx.label}` : 'Génération'), statusEl, bar, stepEl, timer, img, note, cancel);
     this.progressBox.classList.remove('hidden');
     this.resultBox.classList.add('hidden');
     const tick = setInterval(() => (timer.textContent = `Écoulé : ${fmtDuration(Date.now() - ctx.startedAt)}`), 1000);
@@ -447,15 +561,18 @@ export class GenerateScreen {
         width: meta.width || size.width,
         height: meta.height || size.height,
         duration: meta.duration || ctx.params.duration,
-        hasAudio: m.audio,
+        hasAudio: m.audio && ctx.params.extras?.audio !== false,
         elapsedMs: r.elapsedMs,
         startImage: ctx.startImage,
         endImage: ctx.endImage,
+        middleImage: ctx.middleImage,
         parentId: ctx.parentId,
+        enhancedPrompt: r.enhancedPrompt,
       });
       this.progressBox.classList.add('hidden');
       this.showResult(item);
-      toast('Vidéo prête', 'ok');
+      toast(ctx.label ? `${ctx.label} prête` : 'Vidéo prête', 'ok');
+      return 'ok';
     } catch (e) {
       const r = e instanceof GenerationError ? e.readable : explainError(e);
       const cancelled = e instanceof GenerationError && e.cancelled;
@@ -467,6 +584,7 @@ export class GenerateScreen {
         r.detail ? h('pre', { class: 'detail' }, r.detail) : null,
         h('button', { type: 'button', class: 'btn', on: { click: () => app.navigate('journal') } }, 'Voir le Journal'),
       );
+      return cancelled ? 'cancelled' : 'error';
     } finally {
       clearInterval(tick);
       releaseAwake('génération');
@@ -483,7 +601,10 @@ export class GenerateScreen {
       this.resultBox,
       h('h2', null, 'Résultat'),
       video,
-      h('p', { class: 'hint' }, `${item.modelLabel} · ${item.width}×${item.height} · ${item.duration.toFixed(1)} s · seed ${item.seed} · ${fmtDuration(item.elapsedMs)}`),
+      h('p', { class: 'hint' }, `${item.modelLabel} · ${item.width}×${item.height} · ${item.duration.toFixed(1)} s · seed ${item.seed}${item.hasAudio ? ' · avec son' : ''} · ${fmtDuration(item.elapsedMs)}`),
+      item.enhancedPrompt && item.params.enhancePrompt
+        ? h('details', { class: 'enhanced', 'data-testid': 'enhanced-prompt' }, h('summary', null, 'Prompt utilisé par le modèle (amélioré)'), h('p', null, item.enhancedPrompt))
+        : null,
       h(
         'div',
         { class: 'actions' },
@@ -514,7 +635,7 @@ export async function extendItem(item: GalleryItem): Promise<void> {
     const frame = await lastFrame(item.blob, (t) => toast(t, 'info'));
     app.prefill = {
       modelId: target.id,
-      params: { prompt: item.params.prompt, negative: item.params.negative, preset: item.params.preset, ratio: item.params.ratio, duration: item.params.duration, fps: item.params.fps },
+      params: { prompt: item.params.prompt, negative: item.params.negative, preset: item.params.preset, ratio: item.params.ratio, duration: item.params.duration, fps: item.params.fps, extras: item.params.extras },
       startImage: frame,
       parentId: item.id,
       note: `Prolongation de ${item.id} avec ${target.label}`,

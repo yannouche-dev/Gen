@@ -16,7 +16,7 @@ export type Route = 'instance' | 'generate' | 'gallery' | 'journal' | 'keys';
 /** Pré-remplissage du formulaire de génération (Rejouer / Prolonger). */
 export interface Prefill {
   modelId: string;
-  params: Partial<Omit<GenParams, 'startImage' | 'endImage' | 'outputPrefix'>>;
+  params: Partial<Omit<GenParams, 'startImage' | 'endImage' | 'middleImage' | 'outputPrefix'>>;
   startImage?: Blob | null;
   endImage?: Blob | null;
   parentId?: string;

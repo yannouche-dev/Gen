@@ -162,7 +162,40 @@
             }
           ]
         }
-      }
+      },
+      "enhancedPromptNode": "405:381",
+      "extras": [
+        {
+          "key": "audio",
+          "label": "Son généré (ambiance, voix, musique)",
+          "type": "bool",
+          "default": true,
+          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "unlinkWhenFalse": [
+            {
+              "node": "405:370",
+              "input": "audio"
+            }
+          ]
+        },
+        {
+          "key": "enhanceCreativity",
+          "label": "Créativité de l’amélioration du prompt",
+          "type": "number",
+          "min": 0.2,
+          "max": 1.2,
+          "step": 0.05,
+          "default": 0.7,
+          "dependsOn": "enhancePrompt",
+          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "targets": [
+            {
+              "node": "405:380",
+              "input": "sampling_mode.temperature"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "ltx25-i2v",
@@ -279,12 +312,61 @@
             }
           ]
         }
-      }
+      },
+      "enhancedPromptNode": "398:381",
+      "extras": [
+        {
+          "key": "imageStrength",
+          "label": "Fidélité à l’image de début",
+          "type": "number",
+          "min": 0.3,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.7,
+          "help": "Haut : la vidéo colle à l’image (peu de mouvement). Bas : plus de liberté et de mouvement.",
+          "targets": [
+            {
+              "node": "398:357",
+              "input": "strength"
+            }
+          ]
+        },
+        {
+          "key": "audio",
+          "label": "Son généré (ambiance, voix, musique)",
+          "type": "bool",
+          "default": true,
+          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "unlinkWhenFalse": [
+            {
+              "node": "398:370",
+              "input": "audio"
+            }
+          ]
+        },
+        {
+          "key": "enhanceCreativity",
+          "label": "Créativité de l’amélioration du prompt",
+          "type": "number",
+          "min": 0.2,
+          "max": 1.2,
+          "step": 0.05,
+          "default": 0.7,
+          "dependsOn": "enhancePrompt",
+          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "targets": [
+            {
+              "node": "398:380",
+              "input": "sampling_mode.temperature"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "ltx25-flf2v",
       "family": "ltx25",
-      "label": "LTX-2.5 · Première + dernière image",
+      "label": "LTX-2.5 · Images clés (début, milieu, fin)",
       "mode": "flf2v",
       "audio": true,
       "workflow": "workflows/ltx25-flf2v.json",
@@ -400,8 +482,71 @@
               "input": "value"
             }
           ]
+        },
+        "middleImage": {
+          "required": false,
+          "insertGuide": {
+            "after": "251:206",
+            "before": "251:204",
+            "load": "39",
+            "resize": "251:214",
+            "preprocess": "251:195"
+          }
         }
-      }
+      },
+      "enhancedPromptNode": "251:249",
+      "extras": [
+        {
+          "key": "guideStrength",
+          "label": "Force des images clés",
+          "type": "number",
+          "min": 0.3,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.7,
+          "help": "Haut : chaque image clé est reproduite fidèlement à son instant. Bas : transitions plus libres.",
+          "targets": [
+            {
+              "node": "251:206",
+              "input": "strength"
+            },
+            {
+              "node": "251:204",
+              "input": "strength"
+            }
+          ]
+        },
+        {
+          "key": "audio",
+          "label": "Son généré (ambiance, voix, musique)",
+          "type": "bool",
+          "default": true,
+          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "unlinkWhenFalse": [
+            {
+              "node": "251:218",
+              "input": "audio"
+            }
+          ]
+        },
+        {
+          "key": "enhanceCreativity",
+          "label": "Créativité de l’amélioration du prompt",
+          "type": "number",
+          "min": 0.2,
+          "max": 1.2,
+          "step": 0.05,
+          "default": 0.7,
+          "dependsOn": "enhancePrompt",
+          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "targets": [
+            {
+              "node": "251:247",
+              "input": "sampling_mode.temperature"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "wan22-t2v",

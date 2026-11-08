@@ -29,6 +29,7 @@ async function upload(name) {
 const info = await (await fetch(`${COMFY}/object_info`)).json();
 const start = await upload('vg_validate_start.png');
 const end = await upload('vg_validate_end.png');
+const middle = await upload('vg_validate_middle.png');
 let failures = 0;
 
 for (const model of reg.models) {
@@ -47,6 +48,16 @@ for (const model of reg.models) {
   }
   variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.max, fps: model.fps.options.at(-1), fast: true, enhancePrompt: true, steps: 8, cfg: 2.5 });
   variants.push({ preset: model.resolution.default, ratio: '9:16', duration: model.duration.min, fps: model.fps.options[0], steps: 30, cfg: 4 });
+  // Options propres au modèle : booléens à faux (ex. son coupé), nombres aux bornes, image clé intermédiaire.
+  if (model.extras?.length || model.params.middleImage) {
+    const lo = {}, hi = {};
+    for (const x of model.extras ?? []) {
+      lo[x.key] = x.type === 'bool' ? false : x.min;
+      hi[x.key] = x.type === 'bool' ? true : x.max;
+    }
+    variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.default, fps: model.fps.default, extras: lo, enhancePrompt: true, label: 'extras-min' });
+    variants.push({ preset: model.resolution.default, ratio: '1:1', duration: 4, fps: model.fps.default, extras: hi, enhancePrompt: true, middleImage: 'MIDDLE', middleAt: 2, label: 'extras-max+milieu' });
+  }
   for (const v of variants) {
     const g = {
       prompt: 'Un chat roux traverse une rue pavée sous la pluie, plan large cinématographique',
@@ -54,8 +65,10 @@ for (const model of reg.models) {
       seed: 123456789,
       startImage: start,
       endImage: end,
+
       outputPrefix: `videogen/validate_${model.id}`,
       ...v,
+      middleImage: v.middleImage ? middle : undefined,
     };
     const prompt = buildPrompt(reg, model, wf, g);
     const r = await fetch(`${COMFY}/prompt`, {
@@ -66,7 +79,7 @@ for (const model of reg.models) {
     const body = await r.json();
     const ok = r.ok && Object.keys(body.node_errors || {}).length === 0;
     if (!ok) failures++;
-    console.log(`${ok ? '✓' : '✗'} ${model.id} ${v.preset} ${v.ratio} ${v.duration}s ${v.fps}fps${v.fast ? ' fast' : ''}`, ok ? '' : JSON.stringify(body).slice(0, 800));
+    console.log(`${ok ? '✓' : '✗'} ${model.id} ${v.preset} ${v.ratio} ${v.duration}s ${v.fps}fps${v.fast ? ' fast' : ''}${v.label ? ' ' + v.label : ''}`, ok ? '' : JSON.stringify(body).slice(0, 800));
     await fetch(`${COMFY}/queue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) });
     await fetch(`${COMFY}/interrupt`, { method: 'POST' });
   }

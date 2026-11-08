@@ -73,6 +73,10 @@ export class GalleryScreen {
             ['Résolution', `${it.width}×${it.height} (${p.preset}, ${p.ratio})`],
             ['Durée', `${it.duration.toFixed(1)} s à ${p.fps} i/s`],
             ['Seed', String(it.seed)],
+            ...(it.enhancedPrompt && p.enhancePrompt ? ([['Prompt amélioré', it.enhancedPrompt]] as [string, string][]) : []),
+            ...(Object.keys(p.extras ?? {}).length
+              ? ([['Options', Object.entries(p.extras ?? {}).map(([k, v]) => `${k} = ${v}`).join(', ')]] as [string, string][])
+              : []),
             ...(p.steps !== undefined && !p.fast ? ([['Steps / CFG', `${p.steps} / ${p.cfg ?? '-'}`]] as [string, string][]) : []),
             ['Temps de calcul', fmtDuration(it.elapsedMs)],
           ];

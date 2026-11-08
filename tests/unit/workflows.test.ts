@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildPrompt, checkAvailability, computeSize, frameCount, findVideoOutputs, type ApiPrompt, type Registry } from '../../web/src/workflows/build.ts';
+import { buildPrompt, checkAvailability, computeSize, frameCount, findVideoOutputs, findEnhancedPrompt, type ApiPrompt, type Registry } from '../../web/src/workflows/build.ts';
 import { explainExecutionError, explainPromptRejection } from '../../web/src/comfy/errors.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
@@ -103,6 +103,40 @@ describe('construction des requêtes', () => {
   it('trouve la vidéo dans /history', () => {
     expect(findVideoOutputs({ '75': { images: [{ filename: 'videogen/a_00001_.mp4', subfolder: 'videogen', type: 'output' }], animated: [true] } })).toHaveLength(1);
     expect(findVideoOutputs({ '9': { images: [{ filename: 'x.png', subfolder: '', type: 'output' }] } })).toHaveLength(0);
+  });
+});
+
+describe('options LTX-2.5', () => {
+  const flf = reg.models.find((m) => m.id === 'ltx25-flf2v')!;
+  const base = { prompt: 'x', preset: '720p', ratio: '16:9', duration: 5, fps: 24, seed: 1, startImage: 'a.png', endImage: 'b.png', outputPrefix: 'p' };
+  it('image clé intermédiaire insérée entre les guides officiels', () => {
+    const p = buildPrompt(reg, flf, wf(flf.workflow), { ...base, middleImage: 'm.png', middleAt: 2 });
+    expect(p['vg-mid:load'].inputs.image).toBe('m.png');
+    expect(p['vg-mid:guide'].inputs.frame_idx).toBe(48);
+    expect(p['vg-mid:guide'].inputs.positive).toEqual(['251:206', 0]);
+    expect(p['251:204'].inputs.latent).toEqual(['vg-mid:guide', 2]);
+    expect(p['251:204'].inputs.frame_idx).toBe(-1);
+    expect(checkAvailability(p, info, flf).ok).toBe(true);
+    const none = buildPrompt(reg, flf, wf(flf.workflow), base);
+    expect(none['vg-mid:guide']).toBeUndefined();
+  });
+  it('son coupé, force des images clés, créativité seulement si amélioration active', () => {
+    const p = buildPrompt(reg, flf, wf(flf.workflow), { ...base, extras: { audio: false, guideStrength: 2, enhanceCreativity: 1.1 } });
+    expect('audio' in p['251:218'].inputs).toBe(false);
+    expect(p['251:206'].inputs.strength).toBe(1); // borné au max
+    expect(p['251:247'].inputs['sampling_mode.temperature']).toBe(0.7); // amélioration désactivée : valeur du template
+    const q = buildPrompt(reg, flf, wf(flf.workflow), { ...base, enhancePrompt: true, extras: { enhanceCreativity: 1.1 } });
+    expect(q['251:247'].inputs['sampling_mode.temperature']).toBe(1.1);
+    expect(q['251:218'].inputs.audio).toEqual(['251:220', 0]);
+  });
+  it('fidélité à l’image de début (I2V)', () => {
+    const i2v = reg.models.find((m) => m.id === 'ltx25-i2v')!;
+    const p = buildPrompt(reg, i2v, wf(i2v.workflow), { ...base, extras: { imageStrength: 0.45 } });
+    expect(p['398:357'].inputs.strength).toBe(0.45);
+  });
+  it('prompt amélioré lu dans la sortie PreviewAny', () => {
+    expect(findEnhancedPrompt({ '251:249': { text: ['A detailed prompt'] } }, '251:249')).toBe('A detailed prompt');
+    expect(findEnhancedPrompt({}, '251:249')).toBeNull();
   });
 });
 

@@ -209,7 +209,11 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       const filename = `${base}_${String(st.outputCount).padStart(5, '0')}_${fixture}.mp4`;
       const out = { images: [{ filename, subfolder: sub, type: 'output' }], animated: [true] };
       st.outputs.push({ filename, subfolder: sub });
-      st.history[id] = { prompt: [0, id, prompt, {}, []], outputs: { [save?.[0] ?? '1']: out }, status: { status_str: 'success', completed: true, messages: [['execution_success', { prompt_id: id }]] } };
+      const outputs = { [save?.[0] ?? '1']: out };
+      // Nœud PreviewAny des templates LTX : renvoie le prompt réellement utilisé (amélioré ou non).
+      const preview = Object.entries(prompt).find(([, n]) => n.class_type === 'PreviewAny');
+      if (preview) outputs[preview[0]] = { text: [`Enhanced: ${text.slice(0, 200)}`] };
+      st.history[id] = { prompt: [0, id, prompt, {}, []], outputs, status: { status_str: 'success', completed: true, messages: [['execution_success', { prompt_id: id }]] } };
       emit(clientId, { type: 'executed', data: { node: save?.[0], display_node: save?.[0], output: out, prompt_id: id } });
       emit(clientId, { type: 'execution_success', data: { prompt_id: id, timestamp: Date.now() } });
       emit(clientId, { type: 'executing', data: { node: null, prompt_id: id } });

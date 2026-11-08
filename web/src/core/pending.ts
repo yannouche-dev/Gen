@@ -9,7 +9,7 @@ export interface PendingJob {
   promptId: string;
   instanceId: number;
   modelId: string;
-  params: Omit<GenParams, 'startImage' | 'endImage' | 'outputPrefix'>;
+  params: Omit<GenParams, 'startImage' | 'endImage' | 'middleImage' | 'outputPrefix'>;
   outputPrefix: string;
   uploaded: FileRef[];
   startedAt: number;

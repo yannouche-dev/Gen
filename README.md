@@ -229,6 +229,23 @@ Avec la famille de test : modèle **Wan 2.1 1.3B · Texte → vidéo (test)**, 4
 8. **Arrête** quand tu as fini. Sinon le watchdog le fera après 20 min de file vide, ou après 4 h au maximum.
 9. Si tu fermes l'onglet alors qu'une instance tourne, le navigateur te le rappelle.
 
+**Options du modèle (vue Générer).** Sous le choix du modèle, des étiquettes résument ce qu'il sait faire : durées,
+images par seconde, résolutions, son, images de début, intermédiaire et de fin, steps/CFG. Ensuite :
+
+- **Assistant de prompt** : des boutons ajoutent au prompt des formules en anglais pour la caméra (plan fixe,
+  travelling, orbite, drone…), le cadrage, la lumière et le style, et, pour LTX-2.5, le son (ambiance, musique,
+  dialogue entre guillemets). Il rappelle aussi l'ordre de description conseillé.
+- **Options LTX-2.5** :
+  - **Améliorer le prompt** : Gemma réécrit ton prompt, et le prompt réellement utilisé s'affiche avec le résultat
+    et dans la Galerie. Un curseur règle sa **créativité**.
+  - **Son généré** : LTX-2.5 crée la bande-son avec l'image. Décoché, la vidéo est muette.
+  - **Fidélité à l'image de début** (image → vidéo) : haut, la vidéo colle à l'image ; bas, plus de mouvement.
+  - **Force des images clés** (modèle « Images clés »).
+- **Image clé intermédiaire** (LTX-2.5 · Images clés) : en plus des images de début et de fin, une image placée à
+  l'instant de ton choix. Elle est insérée dans la chaîne officielle de guides `LTXVAddGuide`.
+- **Nombre de vidéos** : jusqu'à 4 variantes à la suite. La seed est aléatoire pour chacune, ou seed fixe, +1, +2…
+- Toutes ces options sont enregistrées dans les **préréglages**.
+
 **Prolonger une vidéo** : la dernière image est extraite dans le navigateur, avec `<video>` + canvas, et ffmpeg.wasm en
 repli (utile sur Safari iOS). Le modèle image → vidéo de la même famille est pré-rempli, ainsi que le prompt, la
 résolution et la durée. Le résultat se place juste après l'original dans la timeline.
@@ -252,7 +269,7 @@ résolution et la durée. Le résultat se place juste après l'original dans la 
 Les workflows sont **convertis des templates officiels ComfyUI** (paquet `comfyui-workflow-templates` 0.11.103,
 installé avec ComfyUI v0.44.2), sans modification. La conversion passe par le frontend officiel (« Export API »).
 Chaque combinaison d'options que l'interface peut produire a été **validée par un vrai ComfyUI v0.44.2**
-(`tools/validate-workflows.mjs`, 86 variantes).
+(`tools/validate-workflows.mjs`, 92 variantes, y compris les options LTX et l'image clé intermédiaire).
 
 | Id | Template officiel | Famille (poids) |
 |---|---|---|
@@ -390,7 +407,7 @@ Les tests de bout en bout couvrent :
 **Vérifié pendant le développement :**
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
-- **Workflows** : les 10 workflows et 86 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
+- **Workflows** : les 10 workflows et 92 variantes d'options sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).
 - **Agent** (`agent.py`) : téléchargements, erreur de licence, watchdog et arrêt via la clé restreinte, testés contre de faux serveurs.

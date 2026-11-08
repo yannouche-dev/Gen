@@ -8,7 +8,9 @@ export interface GalleryItem {
   kind: 'generated' | 'assembled';
   modelId: string;
   modelLabel: string;
-  params: Omit<GenParams, 'startImage' | 'endImage' | 'outputPrefix'>;
+  params: Omit<GenParams, 'startImage' | 'endImage' | 'middleImage' | 'outputPrefix'>;
+  /** Prompt réellement utilisé par le modèle (amélioré), si disponible. */
+  enhancedPrompt?: string | null;
   seed: number;
   blob: Blob;
   url: string;
@@ -20,6 +22,7 @@ export interface GalleryItem {
   elapsedMs: number;
   startImage?: Blob | null;
   endImage?: Blob | null;
+  middleImage?: Blob | null;
   parentId?: string;
 }
 

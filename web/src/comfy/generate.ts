@@ -11,7 +11,7 @@ import { HttpError } from '../core/http.ts';
 import { addPending, removePending, type PendingJob } from '../core/pending.ts';
 import type { ComfyClient, FileRef, HistoryEntry } from './client.ts';
 import { explainError, explainExecutionError, type ReadableError } from './errors.ts';
-import { buildPrompt, findVideoOutputs, type ApiPrompt, type GenParams, type ModelDef, type Registry } from '../workflows/build.ts';
+import { buildPrompt, findEnhancedPrompt, findVideoOutputs, type ApiPrompt, type GenParams, type ModelDef, type Registry } from '../workflows/build.ts';
 
 export interface GenProgress {
   /** Fraction globale estimée (0..1). */
@@ -37,6 +37,8 @@ export interface GenResult {
   modelId: string;
   params: GenParams;
   elapsedMs: number;
+  /** Prompt réellement utilisé par le modèle (après amélioration par Gemma), si disponible. */
+  enhancedPrompt: string | null;
 }
 
 export class GenerationError extends Error {
@@ -54,9 +56,10 @@ export interface GenInput {
   registry: Registry;
   model: ModelDef;
   workflow: ApiPrompt;
-  params: Omit<GenParams, 'startImage' | 'endImage' | 'outputPrefix'>;
+  params: Omit<GenParams, 'startImage' | 'endImage' | 'middleImage' | 'outputPrefix'>;
   startImage?: Blob | null;
   endImage?: Blob | null;
+  middleImage?: Blob | null;
   stallMinutes: number;
   /** Instance Vast qui exécute la génération (pour la reprise après fermeture de l'onglet). */
   instanceId: number;
@@ -99,6 +102,7 @@ export class Generation {
   private uploaded: FileRef[] = [];
   private t0 = Date.now();
   private clientId = crypto.randomUUID();
+  private enhancedPrompt: string | null = null;
   private current = '';
   private currentValue = 0;
   private currentMax = 0;
@@ -143,10 +147,11 @@ export class Generation {
     this.status('Connexion au serveur…');
     this.openSocket();
 
-    const names: { start?: string; end?: string } = {};
-    for (const [key, blob] of [['start', this.input.startImage], ['end', this.input.endImage]] as const) {
+    const names: { start?: string; end?: string; middle?: string } = {};
+    const label = { start: 'Envoi de l’image de début…', end: 'Envoi de l’image de fin…', middle: 'Envoi de l’image clé intermédiaire…' };
+    for (const [key, blob] of [['start', this.input.startImage], ['middle', this.input.middleImage], ['end', this.input.endImage]] as const) {
       if (!blob) continue;
-      this.status(key === 'start' ? 'Envoi de l’image de début…' : 'Envoi de l’image de fin…');
+      this.status(label[key]);
       const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png';
       const ref = await client.uploadImage(blob, `vg_${randomToken(9)}.${ext}`);
       this.uploaded.push(ref);
@@ -155,7 +160,7 @@ export class Generation {
     if (this.cancelled) throw new GenerationError({ title: 'Génération annulée', hint: '' }, true);
 
     this.outputPrefix = `videogen/${model.id}_${Date.now()}`;
-    const prompt = buildPrompt(registry, model, workflow, { ...params, startImage: names.start, endImage: names.end, outputPrefix: this.outputPrefix });
+    const prompt = buildPrompt(registry, model, workflow, { ...params, startImage: names.start, endImage: names.end, middleImage: names.middle, outputPrefix: this.outputPrefix });
     this.indexWorkflow(prompt);
 
     this.status('Envoi du workflow…');
@@ -397,6 +402,7 @@ export class Generation {
     }
     const files = findVideoOutputs(h.outputs);
     if (!files.length) return this.fail(new GenerationError({ title: 'Aucune vidéo produite', hint: 'Le workflow s’est terminé sans sortie vidéo.' }));
+    this.enhancedPrompt = findEnhancedPrompt(h.outputs, this.input.model.enhancedPromptNode);
     await this.deliver(files);
   }
 
@@ -417,6 +423,7 @@ export class Generation {
         modelId: this.input.model.id,
         params: { ...this.input.params, outputPrefix: '' },
         elapsedMs: Date.now() - this.t0,
+        enhancedPrompt: this.enhancedPrompt,
       });
       // Suppression des sorties sur l'instance une fois récupérées.
       void this.input.client.deleteFiles([...files, ...this.uploaded]).catch((e) => journal.warn('génération', 'Suppression des fichiers sur l’instance impossible', e));

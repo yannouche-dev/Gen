@@ -20,6 +20,30 @@ export interface BoolParam {
   default: boolean;
   hides?: string[];
 }
+/** Option propre à un modèle (affichée seulement pour lui), déclarée dans models.json. */
+export interface ExtraParam {
+  key: string;
+  label: string;
+  type: 'number' | 'bool';
+  min?: number;
+  max?: number;
+  step?: number;
+  default: number | boolean;
+  help?: string;
+  /** N'afficher / n'appliquer que si cette option booléenne est active (ex. enhancePrompt). */
+  dependsOn?: string;
+  targets?: Target[];
+  /** Pour un booléen : entrées à débrancher quand il est faux (ex. audio de CreateVideo). */
+  unlinkWhenFalse?: Target[];
+}
+/** Image clé intermédiaire : copie de la chaîne officielle « image de fin » insérée entre deux guides. */
+export interface InsertGuide {
+  after: string;
+  before: string;
+  load: string;
+  resize: string;
+  preprocess: string;
+}
 export interface ModelDef {
   id: string;
   family: string;
@@ -45,7 +69,11 @@ export interface ModelDef {
     cfg?: NumericParam;
     enhancePrompt?: BoolParam;
     fast?: BoolParam;
+    middleImage?: { required?: boolean; insertGuide: InsertGuide };
   };
+  extras?: ExtraParam[];
+  /** Nœud PreviewAny qui renvoie le prompt réellement utilisé (amélioré par Gemma). */
+  enhancedPromptNode?: string;
 }
 export interface Registry {
   version: number;
@@ -74,6 +102,11 @@ export interface GenParams {
   /** Noms de fichiers (sous-dossier compris) déjà envoyés via /upload/image. */
   startImage?: string;
   endImage?: string;
+  /** Image clé intermédiaire (nom envoyé) et son instant en secondes. */
+  middleImage?: string;
+  middleAt?: number;
+  /** Valeurs des options propres au modèle (clé de ExtraParam). */
+  extras?: Record<string, number | boolean>;
   outputPrefix: string;
 }
 
@@ -111,6 +144,8 @@ export function supportedOptions(model: ModelDef) {
     cfg: p.cfg ?? null,
     startImage: !!p.startImage,
     endImage: !!p.endImage,
+    middleImage: !!p.middleImage,
+    extras: model.extras ?? [],
     enhancePrompt: p.enhancePrompt ?? null,
     fast: p.fast ?? null,
     fps: model.fps.options,
@@ -173,8 +208,66 @@ export function buildPrompt(reg: Registry, model: ModelDef, workflow: ApiPrompt,
     if (!g.endImage) throw new Error('Image de fin requise pour ce modèle');
     set(wf, p.endImage.targets, g.endImage);
   }
+  if (p.middleImage && g.middleImage) {
+    const total = frameCount(duration, fps);
+    const at = Math.round((g.middleAt ?? duration / 2) * fps);
+    insertKeyframe(wf, p.middleImage.insertGuide, g.middleImage, Math.min(total - 2, Math.max(1, at)));
+  }
+
+  for (const x of model.extras ?? []) {
+    const enabledBy = x.dependsOn ? (x.dependsOn === 'enhancePrompt' ? !!(g.enhancePrompt ?? p.enhancePrompt?.default) : !!g.extras?.[x.dependsOn]) : true;
+    const raw = g.extras?.[x.key] ?? x.default;
+    if (x.type === 'bool') {
+      const on = !!raw;
+      set(wf, x.targets, on);
+      if (!on) for (const t of x.unlinkWhenFalse ?? []) delete wf[t.node]?.inputs[t.input];
+    } else if (enabledBy) {
+      const v = Math.min(x.max ?? Infinity, Math.max(x.min ?? -Infinity, Number(raw)));
+      set(wf, x.targets, v);
+    }
+  }
+
   set(wf, model.output, g.outputPrefix);
   return wf;
+}
+
+/**
+ * Insère une image clé intermédiaire dans la chaîne officielle de guides LTX (LTXVAddGuide) :
+ * on duplique la branche de l'image de fin (LoadImage → Resize → Preprocess → AddGuide), on la place
+ * entre les guides « after » et « before », avec frame_idx = instant demandé.
+ */
+export function insertKeyframe(wf: ApiPrompt, ig: InsertGuide, image: string, frameIdx: number, id = 'vg-mid'): void {
+  const need = [ig.after, ig.before, ig.load, ig.resize, ig.preprocess];
+  for (const n of need) if (!wf[n]) throw new Error(`Nœud ${n} absent du workflow`);
+  const clone = (src: string) => structuredClone(wf[src]);
+  const load = clone(ig.load);
+  load.inputs.image = image;
+  const resize = clone(ig.resize);
+  resize.inputs.input = [`${id}:load`, 0];
+  const pre = clone(ig.preprocess);
+  pre.inputs.image = [`${id}:resize`, 0];
+  const guide = clone(ig.before);
+  guide.inputs.positive = [ig.after, 0];
+  guide.inputs.negative = [ig.after, 1];
+  guide.inputs.latent = [ig.after, 2];
+  guide.inputs.image = [`${id}:pre`, 0];
+  guide.inputs.frame_idx = frameIdx;
+  guide._meta = { title: 'Image clé intermédiaire' };
+  wf[`${id}:load`] = load;
+  wf[`${id}:resize`] = resize;
+  wf[`${id}:pre`] = pre;
+  wf[`${id}:guide`] = guide;
+  wf[ig.before].inputs.positive = [`${id}:guide`, 0];
+  wf[ig.before].inputs.negative = [`${id}:guide`, 1];
+  wf[ig.before].inputs.latent = [`${id}:guide`, 2];
+}
+
+/** Prompt réellement utilisé, renvoyé par le nœud PreviewAny du workflow (après amélioration). */
+export function findEnhancedPrompt(outputs: Record<string, Record<string, unknown>>, node?: string): string | null {
+  if (!node) return null;
+  const t = outputs[node]?.text;
+  if (Array.isArray(t) && typeof t[0] === 'string') return t[0];
+  return typeof t === 'string' ? t : null;
 }
 
 export interface Availability {
