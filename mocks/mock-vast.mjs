@@ -87,6 +87,19 @@ export function createVastMock({ shared, origin, speed = 1 }) {
       shared.comfy?.reset();
       return send(res, 200, { ok: true });
     }
+    if (url.pathname === '/__mock/seed-many' && req.method === 'POST') {
+      // Beaucoup d'instances (plusieurs pages), dont certaines allumées par un autre projet.
+      const ids = [];
+      for (let n = 0; n < body.count; n++) {
+        const id = state.nextId++;
+        const on = n < (body.running ?? 0);
+        const inst = mkInstance(id, OFFERS[n % 2], {}, on ? 'running' : 'stopped', n === 0 ? 'autre-projet' : n === 1 ? '' : `essai-${n}`);
+        if (on) inst.bootAt = Date.now();
+        state.instances.set(id, inst);
+        ids.push(id);
+      }
+      return send(res, 200, { ids });
+    }
     if (url.pathname === '/__mock/seed-stopped' && req.method === 'POST') {
       // Instance du projet déjà existante et arrêtée (pour tester « redémarrer »).
       const id = state.nextId++;

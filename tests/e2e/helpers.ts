@@ -8,7 +8,7 @@ export const MOCK = 'http://127.0.0.1:4310';
 export async function resetMocks(): Promise<void> {
   await fetch(`${MOCK}/__mock/reset`, { method: 'POST' });
 }
-export async function mockState(): Promise<{ instances: Record<string, unknown>[]; creates: { offerId: number; body: { env: Record<string, string>; onstart: string; label: string; image: string; disk: number; runtype: string } }[]; requests: { auth: string; path: string; method: string }[]; comfy: { deletions: { filename: string }[]; views: string[]; uploads: string[]; prompts: number } | null }> {
+export async function mockState(): Promise<{ instances: (Record<string, unknown> & { id: number; actual_status?: string })[]; creates: { offerId: number; body: { env: Record<string, string>; onstart: string; label: string; image: string; disk: number; runtype: string } }[]; requests: { auth: string; path: string; method: string }[]; comfy: { deletions: { filename: string }[]; views: string[]; uploads: string[]; prompts: number } | null }> {
   return (await fetch(`${MOCK}/__mock/state`)).json();
 }
 

@@ -95,7 +95,8 @@ export class VastApi {
   async listInstances(quiet = false, selectFilters: Record<string, unknown> = {}): Promise<VastInstance[]> {
     const out: VastInstance[] = [];
     let after: string | null = null;
-    for (let page = 0; page < 20; page++) {
+    // On suit TOUTES les pages : aucune instance ne doit passer inaperçue.
+    for (let page = 0; page < 200; page++) {
       const q = new URLSearchParams({
         select_filters: JSON.stringify(selectFilters),
         order_by: JSON.stringify([{ col: 'id', dir: 'desc' }]),
@@ -109,9 +110,9 @@ export class VastApi {
       });
       out.push(...(res.instances ?? []));
       after = res.next_token || null;
-      if (!after) break;
+      if (!after) return out;
     }
-    return out;
+    throw new HttpError('http', 'Liste des instances incomplète (plus de 200 pages)', this.base);
   }
 
   /** Détail d'une instance (v0, encore utilisé par la CLI officielle) ; repli sur la liste v1 si retiré. */

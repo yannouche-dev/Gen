@@ -630,3 +630,46 @@ details > summary {
     flex: 1;
   }
 }
+
+.inst-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.inst {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inst-on {
+  border-color: var(--danger);
+  background: var(--err-bg);
+}
+.inst-odd {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+}
+.inst-meta {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.inst-state.err {
+  color: var(--danger);
+  font-weight: 700;
+}
+.tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--info-bg);
+  font-size: 0.75rem;
+}
+.cost-banner.alert {
+  background: var(--err-bg);
+}

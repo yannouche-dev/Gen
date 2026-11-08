@@ -38,6 +38,15 @@ export interface ManagerState {
   credit: number | null;
   runningSince: number | null;
   autoStop: string | null;
+  /** TOUTES les instances du compte Vast (quel que soit leur label), pour n'en oublier aucune. */
+  all: VastInstance[];
+  allCheckedAt: number | null;
+  allError: string | null;
+}
+
+/** Une instance coûte du GPU si elle tourne, démarre, ou doit tourner. */
+export function isBilling(i: VastInstance): boolean {
+  return i.actual_status === 'running' || i.intended_status === 'running' || ['loading', 'created', 'rebooting'].includes(i.actual_status ?? '');
 }
 
 const STEP_DEFS: [string, string][] = [
@@ -67,6 +76,9 @@ export class InstanceManager {
     credit: null,
     runningSince: null,
     autoStop: null,
+    all: [],
+    allCheckedAt: null,
+    allError: null,
   };
   comfy: ComfyClient | null = null;
   private listeners = new Set<(s: ManagerState) => void>();
@@ -126,9 +138,32 @@ export class InstanceManager {
   }
 
   /** Repère une instance du projet (label) et reprend son suivi si elle tourne. */
+  /** Relit TOUTES les instances du compte (toutes les pages). Ne lève pas d'exception. */
+  async refreshAll(quiet = true): Promise<VastInstance[] | null> {
+    try {
+      const all = await this.api().listInstances(quiet);
+      all.sort((a, b) => b.id - a.id);
+      const before = new Set(this.state.all.filter(isBilling).map((i) => i.id));
+      const billing = all.filter(isBilling);
+      for (const i of billing) {
+        if (!before.has(i.id)) journal.warn('instance', `Instance #${i.id} allumée sur ton compte (${i.gpu_name ?? '?'}, ${i.label || 'sans label'}) : GPU facturé`);
+      }
+      for (const i of all) this.registerInstanceSecrets(i);
+      this.patch({ all, allCheckedAt: Date.now(), allError: null });
+      return all;
+    } catch (e) {
+      this.patch({ allError: e instanceof Error ? e.message : String(e) });
+      return null;
+    }
+  }
+
+  /** Repère une instance du projet (label) et reprend son suivi si elle tourne. Liste aussi toutes les autres. */
   async discover(): Promise<VastInstance | null> {
-    const list = (await this.api().listInstances()).filter((i) => this.isMine(i));
-    list.sort((a, b) => b.id - a.id);
+    const all = await this.refreshAll(false);
+    if (!all) throw new Error(this.state.allError ?? 'Liste des instances Vast indisponible');
+    const others = all.filter((i) => !this.isMine(i) && isBilling(i));
+    if (others.length) journal.warn('instance', `${others.length} autre(s) instance(s) allumée(s) sur ton compte : ${others.map((i) => '#' + i.id).join(', ')}`);
+    const list = all.filter((i) => this.isMine(i));
     const pick = list.find((i) => i.actual_status === 'running') ?? list.find((i) => i.actual_status !== 'offline') ?? list[0] ?? null;
     if (list.length > 1) journal.warn('instance', `${list.length} instances portent le label du projet ; suivi de #${pick?.id}`);
     this.patch({ instance: pick });
@@ -137,13 +172,37 @@ export class InstanceManager {
       return null;
     }
     journal.info('instance', `Instance #${pick.id} trouvée (${pick.actual_status ?? 'inconnu'}, ${pick.gpu_name ?? '?'})`);
-    this.registerInstanceSecrets(pick);
     if (pick.actual_status === 'running' || pick.actual_status === 'loading' || pick.intended_status === 'running') {
       this.followBoot(pick.id, false);
     } else {
       this.patch({ phase: 'stopped', message: `Instance #${pick.id} arrêtée (disque conservé).` });
     }
     return pick;
+  }
+
+  /** Arrête n'importe quelle instance du compte (celle du projet ou une autre). */
+  async stopById(id: number): Promise<void> {
+    if (this.state.instance?.id === id) return this.stop();
+    await this.api().setState(id, 'stopped');
+    journal.info('instance', `Arrêt demandé pour l'instance #${id}`);
+    setTimeout(() => void this.refreshAll(), 3000);
+  }
+
+  /** Détruit n'importe quelle instance du compte (celle du projet ou une autre). */
+  async destroyById(id: number): Promise<void> {
+    if (this.state.instance?.id === id) return this.destroy();
+    await this.api().destroy(id);
+    journal.info('instance', `Instance #${id} détruite`);
+    this.patch({ all: this.state.all.filter((i) => i.id !== id) });
+    setTimeout(() => void this.refreshAll(), 3000);
+  }
+
+  /** Instances facturées (GPU) du compte, avec la version la plus fraîche de l'instance suivie. */
+  billingInstances(): VastInstance[] {
+    const cur = this.state.instance;
+    const all = this.state.all.map((i) => (cur && i.id === cur.id ? cur : i));
+    if (cur && !all.some((i) => i.id === cur.id)) all.push(cur);
+    return all.filter(isBilling);
   }
 
   private registerInstanceSecrets(i: VastInstance) {
@@ -203,6 +262,7 @@ export class InstanceManager {
     journal.info('instance', `Instance #${id} créée (${offer.gpu_name}, ${offer.dph_total.toFixed(3)} $/h)`);
     this.setStep('rented', 'done', `#${id} · ${offer.gpu_name}`);
     saveSession({ instanceId: id, runningSince: null, dph: offer.dph_total });
+    void this.refreshAll();
     this.followBoot(id, true);
   }
 
@@ -227,7 +287,7 @@ export class InstanceManager {
     journal.info('instance', `Arrêt demandé pour #${inst.id} (le disque est conservé, le stockage reste facturé)`);
     this.endSessionClock();
     this.comfy = null;
-    void this.watchUntil(inst.id, (i) => i.actual_status !== 'running', 'stopped', 'Instance arrêtée. Le stockage reste facturé jusqu’à la destruction.');
+    void this.watchUntil(inst.id, (i) => i.actual_status !== 'running', 'stopped', 'Instance arrêtée. Le stockage reste facturé jusqu’à la destruction.').then(() => this.refreshAll());
   }
 
   async destroy(): Promise<void> {
@@ -242,7 +302,8 @@ export class InstanceManager {
     saveSession(null);
     this.comfy = null;
     this.resetSteps();
-    this.patch({ phase: 'idle', instance: null, message: 'Instance détruite.' });
+    this.patch({ phase: 'idle', instance: null, message: 'Instance détruite.', all: this.state.all.filter((i) => i.id !== inst.id) });
+    setTimeout(() => void this.refreshAll(), 3000);
   }
 
   private endSessionClock() {

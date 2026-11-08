@@ -5,9 +5,9 @@ import { confirmDialog } from './dialog.ts';
 import { app } from './context.ts';
 import { journal } from '../core/journal.ts';
 import { GPU_5090, GPU_PRO6000, type Settings } from '../core/settings.ts';
-import type { VastOffer } from '../vast/api.ts';
+import type { VastInstance, VastOffer } from '../vast/api.ts';
 import { formatPrice, reliabilityOf } from '../vast/offers.ts';
-import type { ManagerState } from '../vast/manager.ts';
+import { isBilling, type ManagerState } from '../vast/manager.ts';
 import { explainError } from '../comfy/errors.ts';
 
 const PHASE_LABEL: Record<string, string> = {
@@ -24,6 +24,7 @@ const PHASE_LABEL: Record<string, string> = {
 export class InstanceScreen {
   el = h('div', { class: 'screen' });
   private status = h('section', { class: 'card', 'data-testid': 'instance-status' });
+  private allBox = h('section', { class: 'card', 'data-testid': 'all-instances' });
   private steps = h('ol', { class: 'steps', 'data-testid': 'boot-steps' });
   private actions = h('div', { class: 'actions' });
   private offersBox = h('section', { class: 'offers' });
@@ -31,7 +32,7 @@ export class InstanceScreen {
   private busy = false;
 
   constructor() {
-    this.el.append(this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.steps), this.actions, this.offersBox, this.settingsBox);
+    this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.steps), this.actions, this.offersBox, this.settingsBox);
     app.manager.onChange(() => this.update());
     app.on((w) => {
       if (w === 'settings' || w === 'vault') this.update();
@@ -42,9 +43,84 @@ export class InstanceScreen {
 
   update(): void {
     const s = app.manager.state;
+    this.renderAll(s);
     this.renderStatus(s);
     this.renderSteps(s);
     this.renderActions(s);
+  }
+
+  /** TOUTES les instances du compte Vast, quel que soit leur label : rien ne doit tourner à ton insu. */
+  private renderAll(s: ManagerState) {
+    const cur = s.instance;
+    // Les instances facturées d'abord : on ne doit pas avoir à faire défiler pour les voir.
+    const all = s.all
+      .map((i) => (cur && i.id === cur.id ? cur : i))
+      .sort((a, b) => Number(isBilling(b)) - Number(isBilling(a)) || b.id - a.id);
+    const billing = all.filter(isBilling);
+    const dph = billing.reduce((n, i) => n + (i.dph_total ?? 0), 0);
+    const checked = s.allCheckedAt ? `vérifié à ${new Date(s.allCheckedAt).toLocaleTimeString('fr-FR')}` : 'pas encore vérifié';
+    const refresh = h('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'refresh-all', disabled: !app.vastReady() }, 'Actualiser');
+    refresh.addEventListener('click', async () => {
+      refresh.disabled = true;
+      await app.manager.refreshAll(false);
+      refresh.disabled = false;
+    });
+    const row = (i: VastInstance) => {
+      const st = i.actual_status ?? '?';
+      const on = isBilling(i);
+      const odd = ['exited', 'offline', 'unknown'].includes(st);
+      const label = on ? (st === 'running' ? 'Allumée — GPU facturé' : `${st} — GPU facturé`) : odd ? `${st} — à vérifier` : st === 'stopped' ? 'Arrêtée — stockage facturé' : st;
+      const mine = app.manager.isMine(i);
+      const stop = on ? h('button', { type: 'button', class: 'btn btn-small', 'data-testid': `stop-${i.id}`, on: { click: () => void this.stopOther(i) } }, 'Arrêter') : null;
+      const destroy = h('button', { type: 'button', class: 'btn btn-small btn-danger', 'data-testid': `destroy-${i.id}`, on: { click: () => void this.destroyOther(i) } }, 'Détruire');
+      return h(
+        'li',
+        { class: `inst ${on ? 'inst-on' : odd ? 'inst-odd' : ''}`, 'data-testid': `inst-${i.id}` },
+        h('div', { class: 'inst-head' }, h('strong', null, `#${i.id}`), ` ${i.label || '(sans label)'}`, mine ? h('span', { class: 'tag' }, 'projet') : null),
+        h('div', { class: 'inst-meta' }, `${i.num_gpus ?? 1}× ${i.gpu_name ?? '?'} · ${typeof i.dph_total === 'number' ? formatPrice(i.dph_total) : '?'}${typeof i.uptime_mins === 'number' && on ? ` · allumée depuis ${fmtDuration(i.uptime_mins * 60000)}` : ''}`),
+        h('div', { class: `inst-state ${on ? 'err' : ''}` }, label),
+        h('div', { class: 'row-wrap' }, stop, destroy),
+      );
+    };
+    replace(
+      this.allBox,
+      h('div', { class: 'status-head' }, h('h2', null, `Toutes tes instances Vast (${all.length})`), refresh),
+      s.allError ? h('p', { class: 'msg err' }, `Liste impossible à lire : ${s.allError}. Vérifie dans la console Vast.`) : null,
+      billing.length
+        ? h('p', { class: 'msg err', 'data-testid': 'billing-summary' }, `${billing.length} instance(s) allumée(s) : ≈ ${formatPrice(dph)} au total.`)
+        : s.allCheckedAt
+          ? h('p', { class: 'msg ok', 'data-testid': 'billing-summary' }, all.length ? 'Aucune instance allumée (seul le stockage des instances arrêtées est facturé).' : 'Aucune instance sur ton compte : rien n’est facturé.')
+          : null,
+      all.length ? h('ul', { class: 'inst-list' }, ...all.map(row)) : null,
+      h('small', { class: 'hint' }, `Toutes les instances du compte, quel que soit leur label · ${checked} · vérification automatique chaque minute.`),
+    );
+  }
+
+  private async stopOther(i: VastInstance) {
+    const ok = await confirmDialog({ title: `Arrêter l’instance #${i.id} ?`, body: [`${i.label || 'Sans label'} · ${i.gpu_name ?? ''}`, h('br'), 'Le GPU n’est plus facturé, le disque est conservé (stockage facturé).'], ok: 'Arrêter' });
+    if (!ok) return;
+    try {
+      await app.manager.stopById(i.id);
+      toast(`Arrêt demandé pour #${i.id}`, 'ok');
+    } catch (e) {
+      toast(explainError(e).title, 'error');
+    }
+  }
+
+  private async destroyOther(i: VastInstance) {
+    const ok = await confirmDialog({
+      title: `Détruire l’instance #${i.id} ?`,
+      body: [`${i.label || 'Sans label'} · ${i.gpu_name ?? ''}`, h('br'), 'Son disque et tout son contenu seront supprimés définitivement.'],
+      ok: 'Détruire définitivement',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await app.manager.destroyById(i.id);
+      toast(`Instance #${i.id} détruite`, 'ok');
+    } catch (e) {
+      toast(explainError(e).title, 'error');
+    }
   }
 
   private renderStatus(s: ManagerState) {

@@ -206,8 +206,13 @@ y sont masquées automatiquement.
    - **Rejouer** (mêmes réglages et même seed), **Prolonger**, **Télécharger**, **Supprimer** ;
    - **Timeline** : ordre réglable avec ↑ et ↓, puis **Assembler** avec ffmpeg.wasm, chargé à la demande depuis le site (≈ 32 Mo).
 6. Les vidéos ne vivent **que dans l'onglet**, en mémoire : télécharge celles que tu veux garder. Les fichiers sont supprimés de l'instance dès qu'ils ont été récupérés.
-7. **Arrête** quand tu as fini. Sinon le watchdog le fera après 20 min de file vide, ou après 4 h au maximum.
-8. Si tu fermes l'onglet alors que l'instance tourne, le navigateur te le rappelle.
+7. **Toutes tes instances Vast** sont listées en haut de l'onglet Instance, quel que soit leur label, y compris celles
+   d'autres projets ou créées depuis la console Vast. Les instances **allumées** (GPU facturé) apparaissent en premier,
+   en rouge, avec **Arrêter** et **Détruire**. La liste suit toutes les pages de l'API et se vérifie **chaque minute**
+   et à chaque retour sur l'onglet. Le bandeau du haut passe en alerte dès qu'une instance est allumée, et le
+   navigateur te prévient si tu fermes l'onglet.
+8. **Arrête** quand tu as fini. Sinon le watchdog le fera après 20 min de file vide, ou après 4 h au maximum.
+9. Si tu fermes l'onglet alors qu'une instance tourne, le navigateur te le rappelle.
 
 **Prolonger une vidéo** : la dernière image est extraite dans le navigateur, avec `<video>` + canvas, et ffmpeg.wasm en
 repli (utile sur Safari iOS). Le modèle image → vidéo de la même famille est pré-rempli, ainsi que le prompt, la

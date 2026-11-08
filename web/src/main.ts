@@ -102,13 +102,22 @@ app.on((w) => {
 function updateBanner() {
   const s = app.manager.state;
   const cost = app.manager.sessionCost();
-  const on = !!cost && ['starting', 'booting', 'ready', 'error'].includes(s.phase);
+  const tracked = !!cost && ['starting', 'booting', 'ready', 'error'].includes(s.phase);
+  // Toutes les instances facturées du compte, y compris celles d'autres projets ou oubliées.
+  const billing = app.manager.billingInstances();
+  const others = billing.filter((i) => i.id !== (tracked ? s.instance?.id : -1));
+  const on = tracked || billing.length > 0;
   banner.classList.toggle('hidden', !on);
-  if (!on || !cost) return;
+  banner.classList.toggle('alert', !tracked && billing.length > 0);
+  if (!on) return;
+  const othersDph = others.reduce((n, i) => n + (i.dph_total ?? 0), 0);
+  const text = tracked && cost
+    ? `Instance allumée · ${fmtDuration(cost.hours * 3600000)} · ≈ ${fmtMoney(cost.cost)} (${cost.dph.toFixed(2).replace('.', ',')} $/h)${others.length ? ` · ⚠ +${others.length} autre(s) allumée(s)` : ''}`
+    : `⚠ ${billing.length} instance(s) Vast allumée(s) · ≈ ${othersDph.toFixed(2).replace('.', ',')} $/h`;
   replace(
     banner,
     h('span', { class: 'dot', 'aria-hidden': 'true' }),
-    h('span', null, `Instance allumée · ${fmtDuration(cost.hours * 3600000)} · ≈ ${fmtMoney(cost.cost)} (${cost.dph.toFixed(2).replace('.', ',')} $/h)`),
+    h('span', null, text),
     h('button', { type: 'button', class: 'btn btn-small', on: { click: () => app.navigate('instance') } }, 'Gérer'),
   );
 }
@@ -122,9 +131,18 @@ setInterval(() => {
   if (vault.isUnlocked() && app.vastReady()) void app.manager.refreshCredit();
 }, 5 * 60000);
 
-// Rappel avant de fermer l'onglet si l'instance est encore allumée.
+// Vérification de TOUTES les instances du compte chaque minute, et dès que l'onglet redevient visible.
+setInterval(() => {
+  if (vault.isUnlocked() && app.vastReady()) void app.manager.refreshAll();
+}, BUILD.test ? 3000 : 60000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && vault.isUnlocked() && app.vastReady()) void app.manager.refreshAll();
+});
+
+// Rappel avant de fermer l'onglet si une instance est encore allumée (n'importe laquelle du compte).
 window.addEventListener('beforeunload', (e) => {
-  if (app.manager.state.runningSince && ['starting', 'booting', 'ready'].includes(app.manager.state.phase)) {
+  const tracked = app.manager.state.runningSince && ['starting', 'booting', 'ready'].includes(app.manager.state.phase);
+  if (tracked || app.manager.billingInstances().length > 0) {
     e.preventDefault();
     e.returnValue = '';
   }
