@@ -118,9 +118,29 @@ export class ComicScreen {
   }
 
   private thumb(id: string, alt: string, onRemove?: () => void): HTMLElement {
-    const img = h('img', { alt, class: 'thumb' }) as HTMLImageElement;
+    const img = h('img', { alt, class: 'thumb', style: 'cursor:zoom-in' }) as HTMLImageElement;
     void this.url(id).then((u) => u && (img.src = u));
-    return h('div', { class: 'thumb-box' }, img, onRemove ? h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Retirer', on: { click: onRemove } }, '✕') : null);
+    img.addEventListener('click', () => {
+      void this.url(id).then((u) => {
+        if (!u) return;
+        openViewer({
+          count: 1,
+          start: 0,
+          title: alt,
+          render: async () => {
+            const canvas = document.createElement('canvas');
+            const imgEl = new Image();
+            imgEl.src = u;
+            await imgEl.decode();
+            canvas.width = imgEl.naturalWidth;
+            canvas.height = imgEl.naturalHeight;
+            canvas.getContext('2d')!.drawImage(imgEl, 0, 0);
+            return canvas;
+          },
+        });
+      });
+    });
+    return h('div', { class: 'thumb-box' }, img, onRemove ? h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Retirer', on: { click: (e) => { e.stopPropagation(); onRemove(); } } }, '✕') : null);
   }
 
   private availability(): { flux: boolean | null; qwen: boolean | null } {
