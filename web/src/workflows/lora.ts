@@ -159,3 +159,13 @@ export function insertLorasPair(wf: ApiPrompt, nodes: { high: string; low: strin
   insertLoras(wf, nodes.low, list.filter((l) => (l.target ?? 'both') !== 'high'), '-low');
   return wf;
 }
+
+/** LoRAs recommandées pour LTX-2.5 (chargées par défaut une fois installées). */
+export const DEFAULT_LTX_LORAS: SavedLora[] = [
+  {
+    repo: 'maximsobolev275/LTX-10Eros-LoRA-r768',
+    path: 'LTX_10Eros_LoRA_fro99-avgrank77.safetensors',
+    revision: 'main',
+    base: 'ltx25',
+  },
+];
