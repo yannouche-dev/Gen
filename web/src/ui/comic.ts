@@ -851,14 +851,23 @@ export class ComicScreen {
     setting.addEventListener('change', () => ((pa.setting = setting.value || undefined), this.save()));
     const chars = h(
       'div',
-      { class: 'chips' },
+      { class: 'stack', style: 'gap:6px' },
       ...p.characters.map((c) => {
         const on = pa.characters.includes(c.id);
-        return h('button', { type: 'button', class: `chip ${on ? 'active' : ''}`, 'aria-pressed': String(on), on: { click: () => {
-          pa.characters = on ? pa.characters.filter((x) => x !== c.id) : [...pa.characters, c.id];
-          this.save();
-          this.render();
-        } } }, c.name);
+        return h('div', { class: 'row', style: 'align-items:center; gap:8px' },
+          h('span', { class: on ? 'chip active' : 'chip' }, c.name),
+          on
+            ? h('button', { type: 'button', class: 'btn btn-small btn-danger', 'aria-label': `Retirer ${c.name}`, on: { click: () => {
+                pa.characters = pa.characters.filter((x) => x !== c.id);
+                this.save();
+                this.render();
+              } } }, 'Retirer')
+            : h('button', { type: 'button', class: 'btn btn-small', on: { click: () => {
+                pa.characters = [...pa.characters, c.id];
+                this.save();
+                this.render();
+              } } }, 'Ajouter'),
+        );
       }),
     );
     const bubbleRow = (b: Bubble) => {
