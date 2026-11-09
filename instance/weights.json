@@ -31,7 +31,7 @@
       ]
     },
     "qwen35": {
-      "label": "Studio BD : IA d’écriture Qwen 3.5 4B",
+      "label": "Studio BD : IA d\u2019\u00e9criture Qwen 3.5 4B",
       "files": [
         {
           "repo": "Comfy-Org/Qwen3.5",
@@ -65,7 +65,7 @@
       ]
     },
     "wan22s": {
-      "label": "Test léger : Wan 2.2 5B",
+      "label": "Test l\u00e9ger : Wan 2.2 5B",
       "files": [
         {
           "repo": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
@@ -91,10 +91,10 @@
       "label": "LTX-2.5",
       "files": [
         {
-          "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
-          "path": "split/diffusion_models/ltx25_uncensored_v1.1-fp8_scaled.safetensors",
+          "repo": "Stuubs/Stubelius_Remix_Ltx2.5",
+          "path": "ltx2.5-Stubelius_remix_v1_int8_convrot.safetensors",
           "dir": "diffusion_models",
-          "name": "ltx25_uncensored_v1.1-fp8_scaled.safetensors"
+          "name": "ltx2.5-Stubelius_remix_v1_int8_convrot.safetensors"
         },
         {
           "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
