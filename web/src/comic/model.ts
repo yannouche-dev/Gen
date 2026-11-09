@@ -133,6 +133,7 @@ export const STYLES: StylePreset[] = [
   { id: 'cartoon', label: 'Cartoon jeunesse', prompt: 'friendly cartoon style for children, rounded shapes, thick outlines, cheerful saturated colors' },
   { id: 'realiste', label: 'BD réaliste peinte', prompt: 'realistic painted graphic novel art, detailed rendering, cinematic lighting, rich colors' },
   { id: 'roman-photo', label: 'Roman photo réaliste', prompt: 'photorealistic photo novel, real photographs of real people, cinematic stills, natural lighting, high detail skin and clothing, no illustration, no drawing, no cartoon, photographic style' },
+  { id: 'cinematique', label: 'Réaliste cinématique', prompt: 'cinematic photorealism, film still, anamorphic lens, dramatic lighting, shallow depth of field, high detail, movie frame, realistic skin and fabrics, no illustration, no cartoon' },
 ];
 
 export const TONES: [string, string][] = [
