@@ -7,7 +7,7 @@
       "label": "LTX-2.5",
       "approxGB": 52,
       "default": true,
-      "note": "Dépôt Lightricks/LTX-2.5 protégé : accepter la licence sur huggingface.co."
+      "note": "D\u00e9p\u00f4t Lightricks/LTX-2.5 prot\u00e9g\u00e9 : accepter la licence sur huggingface.co."
     },
     "wan22": {
       "label": "Wan 2.2 (14B)",
@@ -20,28 +20,28 @@
       "default": false
     },
     "wan21s": {
-      "label": "Test minimal : Wan 2.1 1.3B (480p, texte → vidéo)",
+      "label": "Test minimal : Wan 2.1 1.3B (480p, texte \u2192 vid\u00e9o)",
       "approxGB": 10,
       "default": false,
-      "note": "Le plus léger (≈ 10 Go) : idéal pour un premier test du parcours complet."
+      "note": "Le plus l\u00e9ger (\u2248 10 Go) : id\u00e9al pour un premier test du parcours complet."
     },
     "wan22s": {
-      "label": "Test léger : Wan 2.2 5B (720p, texte et image → vidéo)",
+      "label": "Test l\u00e9ger : Wan 2.2 5B (720p, texte et image \u2192 vid\u00e9o)",
       "approxGB": 18,
       "default": false,
-      "note": "≈ 18 Go : permet aussi de tester « Prolonger » (image → vidéo)."
+      "note": "\u2248 18 Go : permet aussi de tester \u00ab Prolonger \u00bb (image \u2192 vid\u00e9o)."
     },
     "flux2dev": {
-      "label": "Studio BD : FLUX.2 Dev (images, personnages de référence)",
+      "label": "Studio BD : FLUX.2 Dev (images, personnages de r\u00e9f\u00e9rence)",
       "approxGB": 57,
       "default": true,
-      "note": "Génère les cases de BD avec tes personnages de référence."
+      "note": "G\u00e9n\u00e8re les cases de BD avec tes personnages de r\u00e9f\u00e9rence."
     },
     "qwen35": {
-      "label": "Studio BD : IA d’écriture Qwen 3.5 4B",
+      "label": "Studio BD : IA d\u2019\u00e9criture Qwen 3.5 4B",
       "approxGB": 9,
       "default": true,
-      "note": "Découpe ton histoire en pages et cases, décrit tes personnages."
+      "note": "D\u00e9coupe ton histoire en pages et cases, d\u00e9crit tes personnages."
     }
   },
   "resolutionPresets": {
@@ -71,7 +71,7 @@
     {
       "id": "ltx25-t2v",
       "family": "ltx25",
-      "label": "LTX-2.5 · Texte → vidéo",
+      "label": "LTX-2.5 Stubelius \u00b7 Texte \u2192 vid\u00e9o",
       "mode": "t2v",
       "audio": true,
       "workflow": "workflows/ltx25-t2v.json",
@@ -165,7 +165,7 @@
           ]
         },
         "enhancePrompt": {
-          "label": "Améliorer le prompt (Gemma)",
+          "label": "Am\u00e9liorer le prompt (Gemma)",
           "default": false,
           "targets": [
             {
@@ -179,10 +179,10 @@
       "extras": [
         {
           "key": "audio",
-          "label": "Son généré (ambiance, voix, musique)",
+          "label": "Son g\u00e9n\u00e9r\u00e9 (ambiance, voix, musique)",
           "type": "bool",
           "default": true,
-          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "help": "LTX-2.5 cr\u00e9e la bande-son en m\u00eame temps que l\u2019image. D\u00e9coch\u00e9 : vid\u00e9o muette.",
           "unlinkWhenFalse": [
             {
               "node": "405:370",
@@ -192,14 +192,14 @@
         },
         {
           "key": "enhanceCreativity",
-          "label": "Créativité de l’amélioration du prompt",
+          "label": "Cr\u00e9ativit\u00e9 de l\u2019am\u00e9lioration du prompt",
           "type": "number",
           "min": 0.2,
           "max": 1.2,
           "step": 0.05,
           "default": 0.7,
           "dependsOn": "enhancePrompt",
-          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "help": "Bas : reformulation fid\u00e8le. Haut : plus d\u2019id\u00e9es ajout\u00e9es par Gemma.",
           "targets": [
             {
               "node": "405:380",
@@ -216,7 +216,7 @@
     {
       "id": "ltx25-i2v",
       "family": "ltx25",
-      "label": "LTX-2.5 · Image → vidéo",
+      "label": "LTX-2.5 Stubelius \u00b7 Image \u2192 vid\u00e9o",
       "mode": "i2v",
       "audio": true,
       "workflow": "workflows/ltx25-i2v.json",
@@ -319,7 +319,7 @@
           ]
         },
         "enhancePrompt": {
-          "label": "Améliorer le prompt (Gemma)",
+          "label": "Am\u00e9liorer le prompt (Gemma)",
           "default": false,
           "targets": [
             {
@@ -333,13 +333,13 @@
       "extras": [
         {
           "key": "imageStrength",
-          "label": "Fidélité à l’image de début",
+          "label": "Fid\u00e9lit\u00e9 \u00e0 l\u2019image de d\u00e9but",
           "type": "number",
           "min": 0.3,
           "max": 1,
           "step": 0.05,
           "default": 0.7,
-          "help": "Haut : la vidéo colle à l’image (peu de mouvement). Bas : plus de liberté et de mouvement.",
+          "help": "Haut : la vid\u00e9o colle \u00e0 l\u2019image (peu de mouvement). Bas : plus de libert\u00e9 et de mouvement.",
           "targets": [
             {
               "node": "398:357",
@@ -349,10 +349,10 @@
         },
         {
           "key": "audio",
-          "label": "Son généré (ambiance, voix, musique)",
+          "label": "Son g\u00e9n\u00e9r\u00e9 (ambiance, voix, musique)",
           "type": "bool",
           "default": true,
-          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "help": "LTX-2.5 cr\u00e9e la bande-son en m\u00eame temps que l\u2019image. D\u00e9coch\u00e9 : vid\u00e9o muette.",
           "unlinkWhenFalse": [
             {
               "node": "398:370",
@@ -362,14 +362,14 @@
         },
         {
           "key": "enhanceCreativity",
-          "label": "Créativité de l’amélioration du prompt",
+          "label": "Cr\u00e9ativit\u00e9 de l\u2019am\u00e9lioration du prompt",
           "type": "number",
           "min": 0.2,
           "max": 1.2,
           "step": 0.05,
           "default": 0.7,
           "dependsOn": "enhancePrompt",
-          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "help": "Bas : reformulation fid\u00e8le. Haut : plus d\u2019id\u00e9es ajout\u00e9es par Gemma.",
           "targets": [
             {
               "node": "398:380",
@@ -386,7 +386,7 @@
     {
       "id": "ltx25-flf2v",
       "family": "ltx25",
-      "label": "LTX-2.5 · Images clés (début, milieu, fin)",
+      "label": "LTX-2.5 Stubelius \u00b7 Images cl\u00e9s",
       "mode": "flf2v",
       "audio": true,
       "workflow": "workflows/ltx25-flf2v.json",
@@ -494,7 +494,7 @@
           ]
         },
         "enhancePrompt": {
-          "label": "Améliorer le prompt (Gemma)",
+          "label": "Am\u00e9liorer le prompt (Gemma)",
           "default": false,
           "targets": [
             {
@@ -518,13 +518,13 @@
       "extras": [
         {
           "key": "guideStrength",
-          "label": "Force des images clés",
+          "label": "Force des images cl\u00e9s",
           "type": "number",
           "min": 0.3,
           "max": 1,
           "step": 0.05,
           "default": 0.7,
-          "help": "Haut : chaque image clé est reproduite fidèlement à son instant. Bas : transitions plus libres.",
+          "help": "Haut : chaque image cl\u00e9 est reproduite fid\u00e8lement \u00e0 son instant. Bas : transitions plus libres.",
           "targets": [
             {
               "node": "251:206",
@@ -538,10 +538,10 @@
         },
         {
           "key": "audio",
-          "label": "Son généré (ambiance, voix, musique)",
+          "label": "Son g\u00e9n\u00e9r\u00e9 (ambiance, voix, musique)",
           "type": "bool",
           "default": true,
-          "help": "LTX-2.5 crée la bande-son en même temps que l’image. Décoché : vidéo muette.",
+          "help": "LTX-2.5 cr\u00e9e la bande-son en m\u00eame temps que l\u2019image. D\u00e9coch\u00e9 : vid\u00e9o muette.",
           "unlinkWhenFalse": [
             {
               "node": "251:218",
@@ -551,14 +551,14 @@
         },
         {
           "key": "enhanceCreativity",
-          "label": "Créativité de l’amélioration du prompt",
+          "label": "Cr\u00e9ativit\u00e9 de l\u2019am\u00e9lioration du prompt",
           "type": "number",
           "min": 0.2,
           "max": 1.2,
           "step": 0.05,
           "default": 0.7,
           "dependsOn": "enhancePrompt",
-          "help": "Bas : reformulation fidèle. Haut : plus d’idées ajoutées par Gemma.",
+          "help": "Bas : reformulation fid\u00e8le. Haut : plus d\u2019id\u00e9es ajout\u00e9es par Gemma.",
           "targets": [
             {
               "node": "251:247",
@@ -575,7 +575,7 @@
     {
       "id": "wan22-t2v",
       "family": "wan22",
-      "label": "Wan 2.2 14B · Texte → vidéo",
+      "label": "Wan 2.2 14B \u00b7 Texte \u2192 vid\u00e9o",
       "mode": "t2v",
       "audio": false,
       "workflow": "workflows/wan22-t2v.json",
@@ -660,7 +660,7 @@
           ]
         },
         "fast": {
-          "label": "Rapide : LoRA lightx2v 4 étapes",
+          "label": "Rapide : LoRA lightx2v 4 \u00e9tapes",
           "default": false,
           "targets": [
             {
@@ -715,7 +715,7 @@
     {
       "id": "wan22-i2v",
       "family": "wan22",
-      "label": "Wan 2.2 14B · Image → vidéo",
+      "label": "Wan 2.2 14B \u00b7 Image \u2192 vid\u00e9o",
       "mode": "i2v",
       "audio": false,
       "workflow": "workflows/wan22-i2v.json",
@@ -809,7 +809,7 @@
           ]
         },
         "fast": {
-          "label": "Rapide : LoRA lightx2v 4 étapes",
+          "label": "Rapide : LoRA lightx2v 4 \u00e9tapes",
           "default": false,
           "targets": [
             {
@@ -864,7 +864,7 @@
     {
       "id": "hy15-t2v",
       "family": "hunyuan15",
-      "label": "HunyuanVideo 1.5 · Texte → vidéo",
+      "label": "HunyuanVideo 1.5 \u00b7 Texte \u2192 vid\u00e9o",
       "mode": "t2v",
       "audio": false,
       "workflow": "workflows/hy15-t2v.json",
@@ -976,7 +976,7 @@
     {
       "id": "hy15-i2v",
       "family": "hunyuan15",
-      "label": "HunyuanVideo 1.5 · Image → vidéo",
+      "label": "HunyuanVideo 1.5 \u00b7 Image \u2192 vid\u00e9o",
       "mode": "i2v",
       "audio": false,
       "workflow": "workflows/hy15-i2v.json",
@@ -1097,7 +1097,7 @@
     {
       "id": "wan21-1.3b-t2v",
       "family": "wan21s",
-      "label": "Wan 2.1 1.3B · Texte → vidéo (test)",
+      "label": "Wan 2.1 1.3B \u00b7 Texte \u2192 vid\u00e9o (test)",
       "mode": "t2v",
       "audio": false,
       "workflow": "workflows/wan21-1.3b-t2v.json",
@@ -1208,7 +1208,7 @@
     {
       "id": "wan22-5b-t2v",
       "family": "wan22s",
-      "label": "Wan 2.2 5B · Texte → vidéo (test)",
+      "label": "Wan 2.2 5B \u00b7 Texte \u2192 vid\u00e9o (test)",
       "mode": "t2v",
       "audio": false,
       "workflow": "workflows/wan22-5b-t2v.json",
@@ -1324,7 +1324,7 @@
     {
       "id": "wan22-5b-i2v",
       "family": "wan22s",
-      "label": "Wan 2.2 5B · Image → vidéo (test)",
+      "label": "Wan 2.2 5B \u00b7 Image \u2192 vid\u00e9o (test)",
       "mode": "i2v",
       "audio": false,
       "workflow": "workflows/wan22-5b-i2v.json",
