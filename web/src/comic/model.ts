@@ -56,7 +56,7 @@ export interface ComicStyle {
   refImageId?: string;
   /** FLUX.2 « Turbo » (8 étapes) : plus rapide ; décoché, 20 étapes pour la qualité finale. */
   turbo: boolean;
-  /** LoRA FLUX.2 appliquées à toutes les images du projet (style, trait…). */
+  /** Adaptateurs de style FLUX.2 appliqués à toutes les images du projet. */
   loras?: { name: string; strength: number }[];
 }
 
@@ -101,7 +101,12 @@ export function newProject(title: string): Project {
     synopsis: '',
     characters: [],
     settings: [],
-    style: { preset: 'franco-belge', extra: '', turbo: true },
+    style: {
+      preset: 'franco-belge',
+      extra: '',
+      turbo: true,
+      loras: [{ name: 'videogen/flux_style.safetensors', strength: 0.85 }],
+    },
     pages: [],
   };
 }
