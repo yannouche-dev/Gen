@@ -22,6 +22,7 @@ import { listProjects, saveProject, deleteProject, putImage, getImage, deleteIma
 import { renderPage, canvasToBlob, type BubbleBox } from '../comic/render.ts';
 import { buildCbz, buildPdf } from '../comic/export.ts';
 import { loraPicker } from './lora.ts';
+import { DEFAULT_FLUX_LORA, loraFileName } from '../workflows/lora.ts';
 import { openViewer } from './viewer.ts';
 
 type Step = 'chars' | 'sets' | 'style' | 'story' | 'pages' | 'export';
@@ -77,6 +78,7 @@ export class ComicScreen {
   }
 
   private async open() {
+    void this.ensureFluxLora();
     if (!this.loaded) {
       try {
         const [flux, qwen] = await Promise.all([FLUX.workflow, QWEN.workflow].map(async (f) => (await (await fetch(f, { cache: 'no-cache' })).json()) as ApiPrompt));
@@ -313,6 +315,32 @@ export class ComicScreen {
   }
 
   // ---------------------------------------------------------------- projets
+
+
+  /** Installe et active automatiquement la LoRA FLUX recommandée sur le projet courant. */
+  private async ensureFluxLora() {
+    const p = this.p;
+    if (!p || !app.manager.comfy) return;
+    const file = loraFileName(DEFAULT_FLUX_LORA.repo, DEFAULT_FLUX_LORA.path);
+    const installed = app.lorasFor('flux2dev').find((l) => l.file === file);
+    if (!installed) {
+      try {
+        await app.manager.comfy.installLora(DEFAULT_FLUX_LORA);
+        journal.info('lora', 'Installation automatique de la LoRA FLUX');
+        await app.refreshLoras();
+      } catch (e) {
+        journal.warn('lora', 'Installation auto LoRA FLUX échouée', String(e));
+        return;
+      }
+    }
+    const found = app.lorasFor('flux2dev').find((l) => l.file === file);
+    if (!found) return;
+    const has = (p.style.loras ?? []).some((l) => l.name === found.name);
+    if (!has) {
+      p.style.loras = [...(p.style.loras ?? []), { name: found.name, strength: 0.85 }];
+      await this.save(true);
+    }
+  }
 
   private async createProject() {
     const title = window.prompt('Titre de la BD', 'Ma BD')?.trim();
