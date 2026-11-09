@@ -61,7 +61,7 @@ interface RawModel {
 }
 
 /**
- * Fusionne les réponses : doublons retirés, modèles de base exclus, dépôts « adultes » exclus, résultats de recherche
+ * Fusionne les réponses : doublons retirés, modèles de base exclus, résultats de recherche
  * gardés seulement s'ils visent ce modèle (déclaration ou nom), tri demandé.
  */
 export function mergeCatalog(lists: unknown[], base: string, sort: CatalogSort): CatalogItem[] {
