@@ -6,6 +6,8 @@ import type { ApiPrompt } from './build.ts';
 export const LORA_BASES: Record<string, string> = {
   ltx25: 'LTX-2.5 (vidéo)',
   flux2dev: 'FLUX.2 Dev (Studio BD)',
+  wan22: 'Wan 2.2 (14B)',
+  wan22s: 'Wan 2.2 (5B)',
 };
 
 export interface LoraChoice {
@@ -91,6 +93,7 @@ export function guessBase(link: HfLink): string {
   const t = `${link.repo}/${link.path ?? ''}`.toLowerCase();
   if (/flux[._-]?2|flux2/.test(t)) return 'flux2dev';
   if (/ltx/.test(t)) return 'ltx25';
+  if (/wan[-_. ]?2[-_. ]?2|wan22/.test(t)) return 'wan22';
   return 'ltx25';
 }
 
