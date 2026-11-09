@@ -1,6 +1,6 @@
 // Catalogue des LoRA publiées sur Hugging Face pour un modèle de base (API publique, appelée depuis le navigateur).
 // Deux sources fusionnées : les dépôts qui déclarent le modèle de base (`base_model:adapter:…`) et une recherche par
-// nom limitée aux LoRA. Les dépôts marqués « not-for-all-audiences » ne sont jamais listés. Module pur, testé.
+// nom limitée aux LoRA. Module pur, testé.
 
 export interface CatalogBase {
   label: string;
@@ -15,6 +15,8 @@ export interface CatalogBase {
 export const CATALOG_BASES: Record<string, CatalogBase> = {
   ltx25: { label: 'LTX-2.5 (vidéo)', ids: ['Lightricks/LTX-2.5'], search: ['ltx-2.5', 'ltx2.5'], nameRe: /ltx[-_. ]?2[-_. ]?5/i },
   flux2dev: { label: 'FLUX.2 Dev (Studio BD)', ids: ['black-forest-labs/FLUX.2-dev'], search: ['flux.2', 'flux2'], nameRe: /flux[-_. ]?2(?![0-9])/i },
+  wan22: { label: 'Wan 2.2 (14B)', ids: ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.2-T2V-A14B'], search: ['wan2.2', 'wan 2.2'], nameRe: /wan[-_. ]?2[-_. ]?2/i },
+  wan22s: { label: 'Wan 2.2 (5B)', ids: ['Wan-AI/Wan2.2-TI2V-5B'], search: ['wan2.2', 'wan 2.2 5b'], nameRe: /wan[-_. ]?2[-_. ]?2/i },
 };
 
 export type CatalogSort = 'downloads' | 'likes' | 'lastModified';
@@ -70,7 +72,6 @@ export function mergeCatalog(lists: unknown[], base: string, sort: CatalogSort):
       const id = raw?.id ?? raw?.modelId;
       if (typeof id !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(id) || byId.has(id) || raw.private) continue;
       const tags = Array.isArray(raw.tags) ? raw.tags.map(String) : [];
-      if (tags.includes('not-for-all-audiences')) continue;
       if (b.ids.some((x) => x.toLowerCase() === id.toLowerCase())) continue;
       const declares = tags.some((t) => b.ids.some((x) => t.toLowerCase() === `base_model:adapter:${x}`.toLowerCase() || t.toLowerCase() === `base_model:${x}`.toLowerCase()));
       const isLora = tags.includes('lora') || tags.some((t) => t.startsWith('base_model:adapter:'));
