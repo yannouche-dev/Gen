@@ -301,29 +301,38 @@ export function panelPrompt(p: Project, panel: Panel, maxRefs = 4): RefPlan {
  * Planche de poses d'un personnage (renforce la cohérence : ajoutée comme image de référence).
  * Avec une photo : « le même personnage que l'image 1 » ; sans photo : dessiné d'après sa description.
  */
+
+function isRealistic(preset: string): boolean {
+  return preset === 'roman-photo' || preset === 'cinematique' || preset === 'realiste';
+}
+
 export function turnaroundPrompt(p: Project, c: Character, withRef = true): string {
   const style = STYLES.find((s) => s.id === p.style.preset);
   const desc = c.description.trim();
+  const real = isRealistic(p.style.preset);
   return [
     withRef
       ? `Character reference sheet of ${c.name}, the exact same character as in reference image 1${desc ? ' (' + desc + ')' : ''}.`
-      : `Character reference sheet of ${c.name}: ${desc || 'a comic book character'}.`,
+      : `Character reference sheet of ${c.name}: ${desc || 'a character'}.`,
     'Show four full-body views side by side: front view, three-quarter view, side profile, back view, plus a close-up of the face.',
     'Neutral standing pose, identical outfit and proportions in every view, plain white background.',
     `${style?.prompt ?? ''}${p.style.extra ? ', ' + p.style.extra : ''}.`,
+    real ? 'Photorealistic, photographic, high detail skin and clothing, no illustration, no drawing, no cartoon, no comic lines.' : '',
     'No text, no labels.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 /** Image de référence d'un décor : plan d'ensemble, sans personnage. */
 export function settingPrompt(p: Project, s: Setting): string {
   const style = STYLES.find((x) => x.id === p.style.preset);
+  const real = isRealistic(p.style.preset);
   return [
     `Establishing shot of ${s.name}: ${s.description.trim() || s.name}.`,
     'Wide view showing the whole place, its architecture, furniture, colors and lighting. Empty scene, no people.',
     `${style?.prompt ?? ''}${p.style.extra ? ', ' + p.style.extra : ''}.`,
+    real ? 'Photorealistic photograph, cinematic lighting, high detail, no illustration, no drawing, no cartoon.' : '',
     'No text, no letters, no signs with writing, no border.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 export const SHEET_SIZE = { width: 1536, height: 864 };
