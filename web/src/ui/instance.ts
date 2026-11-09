@@ -41,6 +41,9 @@ export class InstanceScreen {
   private offersBox = h('section', { class: 'offers' });
   private settingsBox = h('details', { class: 'card' });
   private busy = false;
+  private lastUpdate = 0;
+  private pendingUpdate = false;
+  private static readonly UPDATE_MS = 1500;
 
   constructor() {
     // Durées des étapes en cours, mises à jour chaque seconde.
@@ -48,7 +51,7 @@ export class InstanceScreen {
       for (const el of this.steps.querySelectorAll<HTMLElement>('.step-time[data-live]')) el.textContent = fmtClock(Date.now() - Number(el.dataset.start));
     }, 1000);
     this.el.append(this.allBox, this.status, h('section', { class: 'card' }, h('h2', null, 'Démarrage'), this.overall, this.steps), this.actions, this.offersBox, new LoraCard().el, this.settingsBox);
-    app.manager.onChange(() => this.update());
+    app.manager.onChange(() => this.scheduleUpdate());
     app.on((w) => {
       if (w === 'settings' || w === 'vault') this.update();
     });
@@ -62,6 +65,23 @@ export class InstanceScreen {
     this.renderStatus(s);
     this.renderSteps(s);
     this.renderActions(s);
+    this.lastUpdate = Date.now();
+    this.pendingUpdate = false;
+  }
+
+  /** Rafraîchit au plus toutes les UPDATE_MS, sauf si rien n’est en cours. */
+  private scheduleUpdate() {
+    const now = Date.now();
+    const elapsed = now - this.lastUpdate;
+    if (elapsed >= InstanceScreen.UPDATE_MS) {
+      this.update();
+      return;
+    }
+    if (this.pendingUpdate) return;
+    this.pendingUpdate = true;
+    setTimeout(() => {
+      if (this.pendingUpdate) this.update();
+    }, InstanceScreen.UPDATE_MS - elapsed);
   }
 
   /** TOUTES les instances du compte Vast, quel que soit leur label : rien ne doit tourner à ton insu. */
