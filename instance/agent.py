@@ -507,6 +507,240 @@ def purge_old_files(output_ttl_minutes, input_ttl_minutes):
     plus vieilles que input_ttl."""
     t = now()
     rules = [("temp", input_ttl_minutes), ("input/videogen", input_ttl_minutes)]
+   seen = set()
+    for fam in fams:
+        spec = weights.get("families", {}).get(fam)
+        if not spec:
+            continue
+        for item in spec.get("files", []):
+            key = (item["dir"], os.path.basename(item["path"]))
+            if key in seen:  # fichier partagé entre familles (ex. encodeur umt5) : une seule fois
+                continue
+            seen.add(key)
+            files.append(dict(item, family=fam))
+    state = {"state": "running", "families": fams, "files": [], "total_bytes": 0, "done_bytes": 0,
+             "started": now(), "error": None}
+    out_path = os.path.join(RUN, "models.json")
+    for f in files:
+        dest = os.path.join(COMFY_DIR, "models", f["dir"], os.path.basename(f["path"]))
+        state["files"].append({"family": f["family"], "repo": f["repo"], "path": f["path"],
+                               "name": os.path.basename(f["path"]), "dest": dest, "size": None,
+                               "done": 0, "state": "pending", "error": None})
+    write_json(out_path, state)
+
+    # Tailles attendues (et détection précoce d'un dépôt protégé non accepté).
+    for f in state["files"]:
+        size, err = hf_file_size(f["repo"], f["path"])
+        f["size"] = size
+        if os.path.exists(f["dest"]) and os.path.getsize(f["dest"]) > 0 and \
+                (size is None or os.path.getsize(f["dest"]) == size):
+            f["state"] = "done"
+            f["done"] = os.path.getsize(f["dest"])
+        elif err:
+            f["state"] = "error"
+            f["error"] = err
+    state["total_bytes"] = sum(f["size"] or f["done"] for f in state["files"])
+    write_json(out_path, state)
+
+    missing = [f for f in state["files"] if f["state"] == "pending"]
+    need = sum(f["size"] or 0 for f in missing)
+    os.makedirs(os.path.join(COMFY_DIR, "models"), exist_ok=True)
+    free = shutil.disk_usage(os.path.join(COMFY_DIR, "models")).free
+    if need and free < need + 2 * 1024 ** 3:
+        state["state"] = "error"
+        state["error"] = ("disque insuffisant : %.1f Go nécessaires, %.1f Go libres — augmente la taille "
+                          "du disque ou désactive une famille de modèles" % (need / 1e9, free / 1e9))
+        write_json(out_path, state)
+        return 2
+
+    hf_bin = os.environ.get("HF_BIN") or shutil.which("hf") or "hf"
+    staging_root = os.path.join(VG_HOME, "staging")
+    env = dict(os.environ, HF_XET_HIGH_PERFORMANCE="1", HF_HUB_DISABLE_TELEMETRY="1",
+               HF_HUB_DISABLE_PROGRESS_BARS="1")
+
+    for f in missing:
+        f["state"] = "downloading"
+        staging = os.path.join(staging_root, f["repo"].replace("/", "__"))
+        os.makedirs(staging, exist_ok=True)
+        ok = False
+        for attempt in range(1, 4):
+            stop = threading.Event()
+
+            def progress(fref=f, sdir=staging, ev=stop):
+                while not ev.wait(2):
+                    fref["done"] = min(dir_bytes(sdir), fref["size"] or 1 << 62)
+                    state["done_bytes"] = sum(x["done"] for x in state["files"])
+                    write_json(out_path, state)
+
+            t = threading.Thread(target=progress, daemon=True)
+            t.start()
+            cmd = [hf_bin, "download", f["repo"], f["path"], "--local-dir", staging]
+            proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True)
+            stop.set()
+            t.join()
+            src = os.path.join(staging, f["path"])
+            if proc.returncode == 0 and os.path.exists(src):
+                os.makedirs(os.path.dirname(f["dest"]), exist_ok=True)
+                shutil.move(src, f["dest"])
+                f["done"] = os.path.getsize(f["dest"])
+                f["size"] = f["size"] or f["done"]
+                f["state"] = "done"
+                f["error"] = None
+                ok = True
+                break
+            tail = mask((proc.stdout or "")[-600:])
+            f["error"] = "échec du téléchargement (tentative %d/3) : %s" % (attempt, tail)
+            publish("VIDEOGEN_MODEL_ERROR=%s %s" % (f["name"], f["error"][:200].replace("\n", " ")))
+            write_json(out_path, state)
+            time.sleep(5 * attempt)
+        if not ok:
+            f["state"] = "error"
+        shutil.rmtree(staging, ignore_errors=True)
+        state["total_bytes"] = sum(x["size"] or x["done"] for x in state["files"])
+        state["done_bytes"] = sum(x["done"] for x in state["files"])
+        write_json(out_path, state)
+
+    errors = [f for f in state["files"] if f["state"] == "error"]
+    state["state"] = "error" if errors else "done"
+    if errors:
+        state["error"] = "; ".join("%s : %s" % (f["name"], (f["error"] or "")[:160]) for f in errors)[:1500]
+    state["finished"] = now()
+    write_json(out_path, state)
+    return 1 if errors else 0
+
+
+# --------------------------------------------------------------------------- watchdog
+
+class Watchdog:
+    def __init__(self):
+        self.idle_since = None
+        self.stop_at = None
+        self.reason = None
+        self.triggered = False
+        self.last_error = None
+        self.lock = threading.Lock()
+
+    def boot_ts(self):
+        try:
+            return float(read_text(os.path.join(RUN, "boot_ts"), str(now())))
+        except ValueError:
+            return now()
+
+    def counting(self):
+        steps = read_json(os.path.join(RUN, "steps.json"), {})
+        models = steps.get("models", {}).get("state")
+        if models in ("done", "error"):
+            return True
+        return any(v.get("state") == "error" for v in steps.values())
+
+    def queue_busy(self):
+        try:
+            with urllib.request.urlopen(COMFY_URL + "/queue", timeout=10) as r:
+                q = json.load(r)
+            return bool(q.get("queue_running")) or bool(q.get("queue_pending"))
+        except Exception:
+            return False
+
+    def snapshot(self):
+        boot = self.boot_ts()
+        max_at = boot + MAX_HOURS * 3600 if MAX_HOURS > 0 else None
+        idle_at = self.idle_since + IDLE_MINUTES * 60 if (self.idle_since and IDLE_MINUTES > 0) else None
+        candidates = [t for t in (max_at, idle_at) if t]
+        return {"idle_minutes": IDLE_MINUTES, "max_hours": MAX_HOURS, "boot_ts": boot,
+                "idle_since": self.idle_since, "stop_at": min(candidates) if candidates else None,
+                "triggered": self.triggered, "reason": self.reason, "error": self.last_error,
+                "dry_run": DRY_RUN}
+
+    def tick(self):
+        t = now()
+        if MAX_HOURS > 0 and t - self.boot_ts() >= MAX_HOURS * 3600:
+            return self.trigger("durée maximale atteinte (%g h)" % MAX_HOURS)
+        purge_old_files(OUTPUT_TTL_MIN, INPUT_TTL_MIN)
+        if not self.counting():
+            self.idle_since = None
+            return
+        if self.queue_busy():
+            self.idle_since = None
+        elif self.idle_since is None:
+            self.idle_since = t
+        if IDLE_MINUTES > 0 and self.idle_since and t - self.idle_since >= IDLE_MINUTES * 60:
+            self.trigger("file vide depuis %g min" % IDLE_MINUTES)
+
+    def trigger(self, reason):
+        with self.lock:
+            if self.triggered:
+                return
+            self.triggered = True
+            self.reason = reason
+        publish("VIDEOGEN_STEP=auto_stop:%s" % reason)
+        # Les vidéos non récupérées sont CONSERVÉES (récupérables au prochain démarrage).
+        purge_old_files(None, 0)
+        if DRY_RUN:
+            return
+        ok = stop_self()
+        if not ok:
+            # Dernier recours : extinction du conteneur (PID 1). Voir README, section Watchdog.
+            publish("VIDEOGEN_STEP=auto_stop:fallback_kill")
+            try:
+                os.kill(1, signal.SIGTERM)
+            except OSError as e:
+                self.last_error = "extinction impossible : %s" % e
+
+    def run(self):
+        while True:
+            time.sleep(WATCHDOG_PERIOD)
+            try:
+                self.tick()
+            except Exception as e:  # le watchdog ne doit jamais mourir
+                self.last_error = str(e)
+
+
+def stop_self():
+    """Arrête l'instance via la clé restreinte injectée par Vast (CONTAINER_API_KEY)."""
+    key = os.environ.get("CONTAINER_API_KEY", "")
+    cid = os.environ.get("CONTAINER_ID", "")
+    if not key or not cid:
+        publish("VIDEOGEN_STEP=auto_stop:no_container_key")
+        return False
+    url = "%s/api/v0/instances/%s/" % (VAST_API_BASE, cid)
+    body = json.dumps({"state": "stopped"}).encode()
+    for attempt in range(1, 6):
+        req = urllib.request.Request(url, data=body, method="PUT")
+        req.add_header("Authorization", "Bearer " + key)
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.load(r)
+            if data.get("success", True):
+                publish("VIDEOGEN_STEP=auto_stop:requested")
+                return True
+        except urllib.error.HTTPError as e:
+            publish("VIDEOGEN_STEP=auto_stop:http_%d" % e.code)
+        except Exception as e:
+            publish("VIDEOGEN_STEP=auto_stop:error %s" % str(e)[:120])
+        time.sleep(10 * attempt)
+    return False
+
+
+# --------------------------------------------------------------------------- fichiers
+
+FILE_TYPES = {"output": "output", "input": "input", "temp": "temp"}
+
+
+def safe_path(ftype, subfolder, filename):
+    base = os.path.realpath(os.path.join(COMFY_DIR, FILE_TYPES[ftype]))
+    target = os.path.realpath(os.path.join(base, subfolder or "", filename))
+    if os.path.commonpath([base, target]) != base or target == base:
+        raise ValueError("chemin refusé")
+    return target
+
+
+def purge_old_files(output_ttl_minutes, input_ttl_minutes):
+    """Supprime les sorties plus vieilles que output_ttl (None = jamais) et les entrées/temporaires
+    plus vieilles que input_ttl."""
+    t = now()
+    rules = [("temp", input_ttl_minutes), ("input/videogen", input_ttl_minutes)]
     if output_ttl_minutes is not None:
         rules.append(("output", output_ttl_minutes))
     for sub, ttl in rules:
