@@ -105,7 +105,7 @@ export function newProject(title: string): Project {
       preset: 'franco-belge',
       extra: '',
       turbo: true,
-      loras: [{ name: 'videogen/flux_style.safetensors', strength: 0.85 }],
+      loras: [],
     },
     pages: [],
   };
