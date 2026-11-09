@@ -14,6 +14,7 @@ import type { GalleryItem } from '../media/gallery.ts';
 import { confirmDialog } from './dialog.ts';
 import { loraPicker } from './lora.ts';
 import type { LoraChoice } from '../workflows/lora.ts';
+import { DEFAULT_LTX_LORAS, loraFileName } from '../workflows/lora.ts';
 
 interface FormState {
   modelId: string;
