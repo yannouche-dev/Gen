@@ -91,40 +91,34 @@
       "label": "LTX-2.5",
       "files": [
         {
+          "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
+          "path": "split/diffusion_models/ltx25_uncensored_v1.1-fp8_scaled.safetensors",
+          "dir": "diffusion_models",
+          "name": "ltx25_uncensored_v1.1-fp8_scaled.safetensors"
+        },
+        {
+          "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
+          "path": "split/text_encoders/gemma4_12b_ltx25_uncensored-int8.safetensors",
+          "dir": "text_encoders",
+          "name": "gemma4_12b_ltx25_uncensored-int8.safetensors"
+        },
+        {
+          "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
+          "path": "split/vae/ltx25_uncensored_video_vae.safetensors",
+          "dir": "vae",
+          "name": "ltx25_uncensored_video_vae.safetensors"
+        },
+        {
+          "repo": "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8",
+          "path": "split/vae/ltx25_uncensored_audio_vae.safetensors",
+          "dir": "vae",
+          "name": "ltx25_uncensored_audio_vae.safetensors"
+        },
+        {
           "repo": "Lightricks/LTX-2.5",
           "path": "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
           "dir": "latent_upscale_models",
           "name": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
-        },
-        {
-          "repo": "Lightricks/LTX-2.5",
-          "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
-          "dir": "diffusion_models",
-          "name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-        },
-        {
-          "repo": "Lightricks/LTX-2.5",
-          "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
-          "dir": "vae",
-          "name": "ltx-2.5-video-vae-bf16.safetensors"
-        },
-        {
-          "repo": "Lightricks/LTX-2.5",
-          "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
-          "dir": "vae",
-          "name": "ltx-2.5-audio-vae-bf16.safetensors"
-        },
-        {
-          "repo": "Lightricks/LTX-2.5",
-          "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-          "dir": "text_encoders",
-          "name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
-        },
-        {
-          "repo": "Comfy-Org/gemma-4",
-          "path": "text_encoders/gemma4_e2b_it_int8_convrot.safetensors",
-          "dir": "text_encoders",
-          "name": "gemma4_e2b_it_int8_convrot.safetensors"
         }
       ]
     },
