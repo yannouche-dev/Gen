@@ -64,6 +64,12 @@ for (const model of reg.models) {
   if (model.lora) {
     variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.default, fps: model.fps.default, loras: [{ name: LORA, strength: 0.8 }], label: 'lora×1' });
     variants.push({ preset: model.resolution.default, ratio: '9:16', duration: 4, fps: model.fps.default, enhancePrompt: true, loras: [{ name: LORA, strength: 1 }, { name: LORA, strength: -0.5 }, { name: LORA, strength: 1.5 }], middleImage: model.params.middleImage ? 'MIDDLE' : undefined, middleAt: 2, label: 'lora×3' });
+    // Wan 2.2 14B : paire high / low noise, avec et sans le mode rapide (LoRA lightx2v du template).
+    if (model.lora.pair) {
+      for (const fast of [true, false]) {
+        variants.push({ preset: model.resolution.default, ratio: '16:9', duration: model.duration.default, fps: model.fps.default, fast, loras: [{ name: LORA, strength: 1, target: 'high' }, { name: LORA, strength: 0.8, target: 'low' }, { name: LORA, strength: 0.5, target: 'both' }], label: `lora-paire${fast ? ' rapide' : ''}` });
+      }
+    }
   }
   for (const v of variants) {
     const g = {

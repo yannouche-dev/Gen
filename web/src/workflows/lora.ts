@@ -14,6 +14,21 @@ export interface LoraChoice {
   /** Nom vu par ComfyUI, ex. « videogen/style__ink.safetensors ». */
   name: string;
   strength: number;
+  /**
+   * Modèles à double expert (Wan 2.2 14B : « high noise » puis « low noise ») : modèle qui reçoit la LoRA.
+   * Les LoRA Wan 2.2 14B sont souvent publiées par paires (un fichier par expert). Défaut : les deux.
+   */
+  target?: LoraTarget;
+}
+
+export type LoraTarget = 'both' | 'high' | 'low';
+
+/** Expert visé, d'après le nom du fichier (…high_noise… / …low_noise…). */
+export function guessTarget(name: string): LoraTarget {
+  const n = name.toLowerCase();
+  if (/(^|[^a-z])high([^a-z]|$)|high[-_. ]?noise|_hn[._]/.test(n)) return 'high';
+  if (/(^|[^a-z])low([^a-z]|$)|low[-_. ]?noise|_ln[._]/.test(n)) return 'low';
+  return 'both';
 }
 
 export interface LoraInfo {
@@ -93,7 +108,7 @@ export function guessBase(link: HfLink): string {
   const t = `${link.repo}/${link.path ?? ''}`.toLowerCase();
   if (/flux[._-]?2|flux2/.test(t)) return 'flux2dev';
   if (/ltx/.test(t)) return 'ltx25';
-  if (/wan[-_. ]?2[-_. ]?2|wan22/.test(t)) return 'wan22';
+  if (/wan[-_. ]?2[-_. ]?2|wan22/.test(t)) return /5b|ti2v/.test(t) ? 'wan22s' : 'wan22';
   return 'ltx25';
 }
 
@@ -110,7 +125,7 @@ export const MAX_LORAS = 3;
  * Branche des LoRA après le nœud de chargement du modèle (UNETLoader) : chaque consommateur du modèle
  * (guider, autre LoRA du template, commutateur Turbo…) reçoit la sortie de la dernière LoRA.
  */
-export function insertLoras(wf: ApiPrompt, modelNode: string, loras: LoraChoice[] | undefined): ApiPrompt {
+export function insertLoras(wf: ApiPrompt, modelNode: string, loras: LoraChoice[] | undefined, prefix = ''): ApiPrompt {
   const list = (loras ?? []).filter((l) => l.name && Number.isFinite(l.strength) && l.strength !== 0).slice(0, MAX_LORAS);
   if (!list.length) return wf;
   if (!wf[modelNode]) throw new Error(`Nœud de modèle ${modelNode} absent du workflow`);
@@ -122,14 +137,25 @@ export function insertLoras(wf: ApiPrompt, modelNode: string, loras: LoraChoice[
   }
   let prev: [string, number] = [modelNode, 0];
   list.forEach((l, i) => {
-    const id = `vg-lora${i + 1}`;
+    const id = `vg-lora${prefix}${i + 1}`;
     wf[id] = {
       class_type: 'LoraLoaderModelOnly',
       inputs: { model: prev, lora_name: l.name, strength_model: Math.round(Math.max(-4, Math.min(4, l.strength)) * 100) / 100 },
-      _meta: { title: `LoRA ${i + 1}` },
+      _meta: { title: `LoRA ${prefix ? prefix.replace('-', '') + ' ' : ''}${i + 1}` },
     };
     prev = [id, 0];
   });
   for (const [id, k] of consumers) wf[id].inputs[k] = prev;
+  return wf;
+}
+
+/**
+ * Modèle à double expert (Wan 2.2 14B) : chaque LoRA est branchée sur l'expert visé (high, low ou les deux),
+ * après le chargement de chaque modèle et avant la LoRA lightx2v du mode rapide.
+ */
+export function insertLorasPair(wf: ApiPrompt, nodes: { high: string; low: string }, loras: LoraChoice[] | undefined): ApiPrompt {
+  const list = (loras ?? []).slice(0, MAX_LORAS);
+  insertLoras(wf, nodes.high, list.filter((l) => (l.target ?? 'both') !== 'low'), '-high');
+  insertLoras(wf, nodes.low, list.filter((l) => (l.target ?? 'both') !== 'high'), '-low');
   return wf;
 }

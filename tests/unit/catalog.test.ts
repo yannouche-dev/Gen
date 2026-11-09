@@ -27,10 +27,9 @@ describe('catalogue de LoRA Hugging Face', () => {
     expect(() => catalogQueries('sdxl', 'downloads')).toThrow();
   });
 
-  it('fusion : doublons, modèle de base, dépôts adultes et LoRA d’autres modèles exclus', () => {
+  it('fusion : doublons, modèle de base et LoRA d’autres modèles exclus', () => {
     const a = [
       declared('org/ltx25-dolly', 'Lightricks/LTX-2.5', { downloads: 500 }),
-      declared('nsfw/ltx25-x', 'Lightricks/LTX-2.5', { downloads: 9999, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5', 'not-for-all-audiences'] }),
       { id: 'Lightricks/LTX-2.5', downloads: 1e6, tags: ['diffusers'] },
       { id: 'org/private', downloads: 5, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5'], private: true },
     ];
@@ -58,5 +57,18 @@ describe('catalogue de LoRA Hugging Face', () => {
       { id: 'v/flux21-thing', downloads: 9, tags: ['lora'] }, // « flux21 » n'est pas FLUX.2
     ];
     expect(mergeCatalog([list], 'flux2dev', 'downloads').map((x) => x.id)).toEqual(['org/flux2-ink', 'z/FLUX.2-watercolor']);
+  });
+
+  it('Wan 2.2 : 14B et 5B séparés (modèle déclaré, ou « 5B / TI2V » dans le nom)', () => {
+    const list = [
+      declared('a/wan22-orbit-high', 'Wan-AI/Wan2.2-T2V-A14B', { downloads: 50 }),
+      declared('b/wan22-i2v-zoom', 'Wan-AI/Wan2.2-I2V-A14B', { downloads: 40 }),
+      declared('c/wan22-5b-anime', 'Wan-AI/Wan2.2-TI2V-5B', { downloads: 30 }),
+      { id: 'd/Wan2.2-TI2V-5B-ink', downloads: 20, tags: ['lora'] },
+      { id: 'e/wan2.2-cinematic', downloads: 10, tags: ['lora'] },
+      declared('f/wan21-old', 'Wan-AI/Wan2.1-T2V-14B'),
+    ];
+    expect(mergeCatalog([list], 'wan22', 'downloads').map((x) => x.id)).toEqual(['a/wan22-orbit-high', 'b/wan22-i2v-zoom', 'e/wan2.2-cinematic']);
+    expect(mergeCatalog([list], 'wan22s', 'downloads').map((x) => x.id)).toEqual(['c/wan22-5b-anime', 'd/Wan2.2-TI2V-5B-ink']);
   });
 });

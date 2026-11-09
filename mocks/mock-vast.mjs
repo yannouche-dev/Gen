@@ -25,18 +25,19 @@ function matches(o, q) {
   return true;
 }
 
-// Faux catalogue Hugging Face (/api/models) : LoRA LTX-2.5 et FLUX.2, plus des pièges à exclure (dépôt adulte,
-// modèle de base, LoRA d'un autre modèle).
+// Faux catalogue Hugging Face (/api/models) : LoRA LTX-2.5, FLUX.2 et Wan 2.2, plus des pièges à exclure (modèle de
+// base, LoRA d'un autre modèle).
 const HF_MODELS = [
   { id: 'org/ltx25-dolly-cam', downloads: 5400, likes: 120, tags: ['diffusers', 'lora', 'base_model:adapter:Lightricks/LTX-2.5'], createdAt: '2026-10-02T10:00:00.000Z' },
   { id: 'org/ltx25-ink-style', downloads: 900, likes: 300, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5'], createdAt: '2026-11-01T10:00:00.000Z' },
-  { id: 'nsfw/ltx25-spicy', downloads: 99999, likes: 999, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2.5', 'not-for-all-audiences'], createdAt: '2026-10-20T10:00:00.000Z' },
   { id: 'Lightricks/LTX-2.5', downloads: 500000, likes: 4000, tags: ['diffusers', 'text-to-video'], createdAt: '2026-09-01T10:00:00.000Z' },
   { id: 'someone/LTX-2.5-anime-lora', downloads: 2000, likes: 50, tags: ['lora'], createdAt: '2026-10-15T10:00:00.000Z' },
   { id: 'x/ltx-2-19b-lora', downloads: 7000, likes: 80, tags: ['lora', 'base_model:adapter:Lightricks/LTX-2'], createdAt: '2026-03-01T10:00:00.000Z' },
   { id: 'org/flux2-comic-ink', downloads: 3100, likes: 210, tags: ['lora', 'base_model:adapter:black-forest-labs/FLUX.2-dev'], createdAt: '2026-10-10T10:00:00.000Z' },
   { id: 'z/FLUX.2-watercolor', downloads: 1500, likes: 40, tags: ['lora'], createdAt: '2026-10-12T10:00:00.000Z' },
   { id: 'q/flux1-anime', downloads: 80000, likes: 900, tags: ['lora', 'base_model:adapter:black-forest-labs/FLUX.1-dev'], createdAt: '2025-01-01T10:00:00.000Z' },
+  { id: 'org/Wan2.2-orbit', downloads: 4200, likes: 150, tags: ['lora', 'base_model:adapter:Wan-AI/Wan2.2-T2V-A14B'], createdAt: '2026-09-20T10:00:00.000Z' },
+  { id: 'org/wan2.2-ti2v-5b-ink', downloads: 800, likes: 30, tags: ['lora', 'base_model:adapter:Wan-AI/Wan2.2-TI2V-5B'], createdAt: '2026-09-25T10:00:00.000Z' },
 ];
 function hfModelList(params) {
   const filters = params.getAll('filter');

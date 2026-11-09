@@ -271,6 +271,11 @@ class AgentTest(unittest.TestCase):
         heads = [c for c in self.fake.calls if c[0] == "HEAD" and "comic-style" in c[1]]
         self.assertEqual(heads[0][2], "Bearer hf_secret_token_123456")  # le token HF ne sort que vers HF_BASE
         self.assertIn("/org/comic-style/resolve/main/loras/Ink%20Style.safetensors", heads[0][1])
+        # Bases Wan 2.2 acceptées (14B et 5B).
+        for wan in ("wan22", "wan22s"):
+            code, job = self.post(base + "/videogen/loras", {"repo": "org/wan-style", "path": "%s.safetensors" % wan, "base": wan})
+            self.assertEqual(code, 202, job)
+        self.wait_lora_jobs(base)
         # Déjà installée : rien à télécharger.
         code, again = self.post(base + "/videogen/loras", {"repo": "org/comic-style", "path": "loras/Ink Style.safetensors", "base": "flux2dev"})
         self.assertEqual((code, again.get("already")), (200, True))
@@ -290,7 +295,7 @@ class AgentTest(unittest.TestCase):
         code, job = self.post(base + "/videogen/loras", {"repo": "org/x", "path": "bad.safetensors", "base": "ltx25"})
         self.assertEqual(code, 202)
         st = self.wait_lora_jobs(base)
-        self.assertEqual(len(st["loras"]), 1)
+        self.assertEqual(len(st["loras"]), 3)
         err = [j for j in get(base + "/videogen/loras")["jobs"] if j["file"] == "x__bad.safetensors"]
         self.assertEqual(err[0]["state"], "error")
         self.assertIn("safetensors", err[0]["error"])
@@ -304,7 +309,9 @@ class AgentTest(unittest.TestCase):
         code, res = self.post(base + "/videogen/loras/delete", {"name": "videogen/comic-style__Ink_Style.safetensors"})
         self.assertEqual(code, 200)
         self.assertFalse(os.path.exists(path))
-        self.assertEqual(get(base + "/videogen/loras")["loras"], [])
+        left = get(base + "/videogen/loras")["loras"]
+        self.assertEqual(sorted((l["name"], l["base"]) for l in left),
+                         [("videogen/wan-style__wan22.safetensors", "wan22"), ("videogen/wan-style__wan22s.safetensors", "wan22s")])
 
     def test_lora_size_limit(self):
         base = "http://127.0.0.1:18737"

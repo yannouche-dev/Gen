@@ -326,12 +326,12 @@ export function createComfyMock({ shared, origin, speed = 1 }) {
       return send(res, 200, { deleted: files.map((f) => f.filename), missing: [], refused: [] });
     }
     // LoRA (agent) : même validation que instance/agent.py, téléchargement simulé.
-    if (p === '/videogen/loras' && req.method === 'GET') return send(res, 200, { loras: st.loras, jobs: st.loraJobs.filter((j) => j.state !== 'done'), bases: ['ltx25', 'flux2dev'], max_bytes: 6 * 2 ** 30 });
+    if (p === '/videogen/loras' && req.method === 'GET') return send(res, 200, { loras: st.loras, jobs: st.loraJobs.filter((j) => j.state !== 'done'), bases: ['ltx25', 'flux2dev', 'wan22', 'wan22s'], max_bytes: 6 * 2 ** 30 });
     if (p === '/videogen/loras' && req.method === 'POST') {
       const b = json();
       if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(b.repo ?? '')) return send(res, 400, { error: 'bad_repo', message: 'dépôt Hugging Face invalide' });
       if (!/\.safetensors$/.test(b.path ?? '') || String(b.path).split('/').includes('..')) return send(res, 400, { error: 'bad_path', message: 'seules les LoRA au format .safetensors sont acceptées' });
-      if (!['ltx25', 'flux2dev'].includes(b.base)) return send(res, 400, { error: 'bad_base', message: 'modèle de base inconnu' });
+      if (!['ltx25', 'flux2dev', 'wan22', 'wan22s'].includes(b.base)) return send(res, 400, { error: 'bad_base', message: 'modèle de base inconnu' });
       if (/gated/.test(b.repo)) return send(res, 400, { error: 'hf', message: `accès refusé à ${b.repo} : accepte la licence sur huggingface.co` });
       const stem = String(b.path).split('/').pop().replace(/\.safetensors$/, '');
       const file = `${b.repo.split('/')[1]}__${stem}`.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^[._]+|[._]+$/g, '').slice(0, 120) + '.safetensors';

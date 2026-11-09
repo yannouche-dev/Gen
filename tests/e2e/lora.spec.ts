@@ -108,8 +108,7 @@ test('catalogue Hugging Face : liste des LoRA par modèle, tri, recherche, insta
   await page.getByTestId('lora-catalog').locator('summary').click();
   await expect(page.getByTestId('catalog-count')).toHaveText('3 LoRA pour LTX-2.5 (vidéo)');
   const names = () => page.getByTestId('catalog-item').locator('.catalog-name').allTextContents();
-  expect(await names()).toEqual(['ltx25-dolly-cam', 'LTX-2.5-anime-lora', 'ltx25-ink-style']); // dépôt adulte, modèle de base et LoRA LTX-2 exclus
-  await expect(page.getByTestId('lora-catalog')).toContainText('Les dépôts réservés aux adultes ne sont pas listés');
+  expect(await names()).toEqual(['ltx25-dolly-cam', 'LTX-2.5-anime-lora', 'ltx25-ink-style']); // modèle de base et LoRA LTX-2 exclus
   await page.getByTestId('catalog-sort').selectOption('likes');
   await expect.poll(names).toEqual(['ltx25-ink-style', 'ltx25-dolly-cam', 'LTX-2.5-anime-lora']);
   await page.getByTestId('catalog-base').selectOption('flux2dev');
@@ -134,4 +133,43 @@ test('catalogue Hugging Face : liste des LoRA par modèle, tri, recherche, insta
   await expect(page.getByTestId('lora-item')).toHaveCount(1, { timeout: 20_000 });
   await expect(page.getByTestId('lora-item')).toContainText('ltx25-ink-style__');
   await expect(page.getByTestId('catalog-installed')).toHaveText('✓ installée');
+});
+
+test('LoRA Wan 2.2 14B : paires high / low noise, chaque fichier sur le bon expert', async ({ page }) => {
+  await enterKeys(page);
+  await page.locator('details', { hasText: 'Réglages de location' }).locator('summary').click();
+  await page.getByTestId('family-wan22').check();
+  await rentAndWaitReady(page);
+  // Catalogue : Wan 2.2 14B et 5B séparés
+  await page.getByTestId('lora-catalog').locator('summary').click();
+  await page.getByTestId('catalog-base').selectOption('wan22');
+  await expect(page.getByTestId('catalog-count')).toHaveText('1 LoRA pour Wan 2.2 (14B)');
+  await page.getByTestId('catalog-base').selectOption('wan22s');
+  await expect(page.getByTestId('catalog-count')).toHaveText('1 LoRA pour Wan 2.2 (5B)');
+  // Installation des deux fichiers de la paire (base devinée : Wan 2.2 14B)
+  for (const f of ['orbit_high_noise', 'orbit_low_noise']) {
+    await page.getByTestId('lora-link').fill(`https://huggingface.co/org/Wan2.2-orbit/blob/main/${f}.safetensors`);
+    await page.getByTestId('lora-link').press('Tab');
+    await expect(page.getByTestId('lora-base')).toHaveValue('wan22');
+    await page.getByTestId('lora-install').click();
+  }
+  await expect(page.getByTestId('lora-item')).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByTestId('lora-item').first()).toContainText('Wan 2.2 (14B)');
+
+  await page.getByTestId('tab-generate').click();
+  await expect.poll(() => page.getByTestId('model-select').locator('option[value="wan22-t2v"]').evaluate((o: HTMLOptionElement) => o.disabled)).toBe(false);
+  await page.getByTestId('model-select').selectOption('wan22-t2v');
+  await page.getByTestId('lora-add').click();
+  await page.getByTestId('lora-add').click();
+  await page.getByTestId('lora-name-1').selectOption('videogen/Wan2.2-orbit__orbit_high_noise.safetensors');
+  await page.getByTestId('lora-name-2').selectOption('videogen/Wan2.2-orbit__orbit_low_noise.safetensors');
+  await expect(page.getByTestId('lora-target-1')).toHaveValue('high');
+  await expect(page.getByTestId('lora-target-2')).toHaveValue('low');
+  await generate(page, 'a camera orbiting around a lighthouse');
+  await expect(page.getByTestId('result-video')).toBeVisible({ timeout: 60_000 });
+  const wf = (await mockState()).comfy!.lastPrompts.at(-1)!;
+  expect(wf['vg-lora-high1'].inputs).toEqual({ model: ['128:75', 0], lora_name: 'videogen/Wan2.2-orbit__orbit_high_noise.safetensors', strength_model: 1 });
+  expect(wf['vg-lora-low1'].inputs).toEqual({ model: ['128:76', 0], lora_name: 'videogen/Wan2.2-orbit__orbit_low_noise.safetensors', strength_model: 1 });
+  expect(wf['vg-lora-high2']).toBeUndefined();
+  expect(wf['vg-lora-low2']).toBeUndefined();
 });

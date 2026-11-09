@@ -362,24 +362,27 @@ usage commercial de tes planches.
 ### LoRA (Hugging Face)
 
 Une LoRA ajuste le modèle sans le remplacer : un style de dessin, un mouvement de caméra, un trait d'encre…
-Elles viennent **uniquement de Hugging Face** et marchent avec **LTX-2.5** (onglet Générer) et **FLUX.2 Dev**
-(Style du Studio BD).
+Elles viennent **uniquement de Hugging Face** et marchent avec **LTX-2.5** et **Wan 2.2** (14B et 5B) dans l'onglet
+Générer, et **FLUX.2 Dev** (Style du Studio BD).
 
 1. **Catalogue** (Instance → LoRA → *Catalogue Hugging Face*, consultable même sans instance) : la liste en
-   direct de toutes les LoRA publiées pour **LTX-2.5** ou **FLUX.2 Dev**.
+   direct de toutes les LoRA publiées pour **LTX-2.5**, **Wan 2.2 (14B ou 5B)** ou **FLUX.2 Dev**.
    - Deux sources : les dépôts qui déclarent ce modèle de base, et une recherche par nom.
    - Tri par téléchargements, likes ou date ; recherche par mot (dolly, anime, ink…).
    - **Installer** en un geste (choix du fichier si le dépôt en contient plusieurs) ; *Voir la page* ouvre Hugging Face.
-   - Les LoRA d'autres modèles (LTX-2, FLUX.1) et les dépôts marqués réservés aux adultes ne sont pas listés.
+   - Les LoRA d'autres modèles (LTX-2, Wan 2.1, FLUX.1) ne sont pas listées.
    - La liste vient de l'API publique de Hugging Face, appelée depuis ton navigateur, sans token.
 
    Ou **Instance → LoRA** (instance prête) : colle le lien Hugging Face.
    - Lien d'un fichier (`…/blob/main/fichier.safetensors`) : installé directement.
    - Lien d'un dépôt : la liste de ses fichiers `.safetensors` s'affiche, choisis-en un.
-   - **Faite pour** : LTX-2.5 ou FLUX.2 Dev, deviné d'après le nom, à corriger si besoin.
+   - **Faite pour** : LTX-2.5, Wan 2.2 (14B ou 5B) ou FLUX.2 Dev, deviné d'après le nom, à corriger si besoin.
 2. L'instance la télécharge avec ton token HF (dépôts privés ou à licence compris), avec la progression. Elle est
    utilisable **aussitôt**, sans redémarrage.
-3. **Générer** (modèles LTX-2.5) : section *LoRA*, jusqu'à 3, chacune avec sa **force** (−1 à 2, 1 par défaut).
+3. **Générer** (modèles LTX-2.5 et Wan 2.2) : section *LoRA*, jusqu'à 3, chacune avec sa **force** (−1 à 2, 1 par défaut).
+   **Wan 2.2 14B** a deux modèles (« high noise » pour le début du débruitage, « low noise » pour la fin) et ses LoRA
+   sont souvent publiées **par paires**. Chaque LoRA a donc un choix *S'applique à* (les deux, high noise ou low noise),
+   prérempli d'après le nom du fichier (…high_noise…, …low_noise…). Elles passent avant la LoRA lightx2v du mode rapide.
    **Studio BD → Style** : *LoRA de style*, appliquée à **toutes** les images du projet (cases, planches, décors).
    Les LoRA sont gardées dans les préréglages.
 4. Les LoRA restent sur le disque de l'instance tant qu'elle existe. Ce navigateur se souvient de leurs liens :
@@ -417,7 +420,7 @@ contre ComfyUI v0.44.2.
 Les workflows sont **convertis des templates officiels ComfyUI** (paquet `comfyui-workflow-templates` 0.11.103,
 installé avec ComfyUI v0.44.2), sans modification. La conversion passe par le frontend officiel (« Export API »).
 Chaque combinaison d'options que l'interface peut produire a été **validée par un vrai ComfyUI v0.44.2**
-(`tools/validate-workflows.mjs`, 98 variantes, y compris les options LTX, l'image clé intermédiaire et les LoRA).
+(`tools/validate-workflows.mjs`, 110 variantes, y compris les options LTX, l'image clé intermédiaire et les LoRA, paires Wan 2.2 comprises).
 
 | Id | Template officiel | Famille (poids) |
 |---|---|---|
@@ -560,7 +563,8 @@ Les tests de bout en bout couvrent :
 - Studio BD : projet chiffré, personnage décrit par l'IA, découpage, page en un seul travail avec références, bulles déplacées, export PDF/CBZ, persistance après rechargement, case récupérée après fermeture de l'onglet, message si FLUX.2/Qwen manque ;
 - visionneuse plein écran : zoom aux boutons, double-tap, molette et pincement, déplacement, balayage entre pages, PNG de la page, fermeture par ✕ et par « retour » ;
 - BD express : titre → bible → découpage → planches, décors et pages tous en file, onglet fermé puis rouvert, tout rangé dans le projet ;
-- catalogue de LoRA : liste par modèle (exclusion des dépôts adultes, du modèle de base et des LoRA d'autres modèles), tri, recherche, installation en un geste ;
+- catalogue de LoRA : liste par modèle (exclusion du modèle de base et des LoRA d'autres modèles, Wan 2.2 14B et 5B séparés), tri, recherche, installation en un geste ;
+- LoRA Wan 2.2 14B : paire high / low noise installée, chaque fichier branché sur le bon expert ;
 - LoRA : installation depuis un dépôt (choix du fichier) ou un lien direct, refus d'un dépôt protégé et d'un autre site, LoRA LTX dans Générer et LoRA de style FLUX.2 dans le Studio BD (nœuds vérifiés), suppression, réinstallation sur une nouvelle instance.
 
 Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, travaux fusionnés de la BD express sur les 8 gabarits) contre un vrai ComfyUI :
@@ -571,7 +575,7 @@ Validation des requêtes BD (0 à 4 références, Qwen avec et sans image, trava
 **Vérifié pendant le développement :**
 
 - **Documentation à jour (novembre 2026)** : routes et champs de l'API Vast.ai, `server.py` de ComfyUI v0.44, CLI `hf`, cloudflared, Caddy et ffmpeg.wasm.
-- **Workflows** : les 10 workflows et 98 variantes d'options (LoRA comprises) sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
+- **Workflows** : les 10 workflows et 110 variantes d'options (LoRA comprises, paires Wan 2.2 high / low noise aussi) sont acceptés par un vrai ComfyUI v0.44.2. Seuls des fichiers de poids vides ont été utilisés, sans GPU.
 - **Studio BD** : les 32 requêtes types sont acceptées par ComfyUI v0.44.2 : FLUX.2 Dev avec 0 à 4 références et avec LoRA de style, Qwen 3.5 avec et sans image, bible, et travaux fusionnés de la BD express sur les 8 mises en page. Le PDF et le CBZ produits sont relus par des outils standards.
 - **Caddyfile** : testé avec le vrai Caddy 2.11.9 (jeton, CORS, en-têtes retirés, jeton masqué dans les logs).
 - **Amorce `onstart`** : exécutée réellement (téléchargement, vérification SHA-256, refus d'un fichier modifié).

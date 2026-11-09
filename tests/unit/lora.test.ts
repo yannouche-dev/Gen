@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { installStorage } from './setup-storage.ts';
-import { guessBase, insertLoras, loraFileName, parseHfLink, MAX_LORAS } from '../../web/src/workflows/lora.ts';
+import { guessBase, guessTarget, insertLoras, loraFileName, parseHfLink, MAX_LORAS } from '../../web/src/workflows/lora.ts';
 import { buildPrompt, checkAvailability, type ApiPrompt, type Registry } from '../../web/src/workflows/build.ts';
 import { buildFlux, FLUX } from '../../web/src/comic/flux.ts';
 import { loadSettings, DEFAULT_SETTINGS } from '../../web/src/core/settings.ts';
@@ -38,7 +38,7 @@ describe('liens Hugging Face', () => {
 });
 
 describe('insertion des LoRA', () => {
-  for (const m of reg.models.filter((x) => x.lora)) {
+  for (const m of reg.models.filter((x) => x.lora && !x.lora.pair)) {
     it(`${m.id} : LoRA branchées entre le modèle et ses utilisateurs`, () => {
       const out = buildPrompt(reg, m, wf(m.workflow), {
         prompt: 'x', preset: m.resolution.default, ratio: '16:9', duration: m.duration.default, fps: m.fps.default, seed: 1, outputPrefix: 'p',
@@ -54,7 +54,42 @@ describe('insertion des LoRA', () => {
       expect(checkAvailability(out, info).missingNodes).toEqual([]);
     });
   }
-  it('modèle sans LoRA (Wan) : option ignorée', () => {
+  for (const m of reg.models.filter((x) => x.lora?.pair)) {
+    it(`${m.id} (Wan 2.2 14B) : chaque LoRA sur l’expert visé, avant la LoRA lightx2v du mode rapide`, () => {
+      const { high, low } = m.lora!.pair!;
+      const out = buildPrompt(reg, m, wf(m.workflow), {
+        prompt: 'x', preset: m.resolution.default, ratio: '16:9', duration: m.duration.default, fps: m.fps.default, seed: 1, outputPrefix: 'p', fast: true, startImage: 's.png',
+        loras: [
+          { name: 'videogen/orbit__high.safetensors', strength: 1, target: 'high' },
+          { name: 'videogen/orbit__low.safetensors', strength: 0.8, target: 'low' },
+          { name: 'videogen/style.safetensors', strength: 0.5 },
+        ],
+      });
+      expect(out['vg-lora-high1'].inputs).toEqual({ model: [high, 0], lora_name: 'videogen/orbit__high.safetensors', strength_model: 1 });
+      expect(out['vg-lora-high2'].inputs).toEqual({ model: ['vg-lora-high1', 0], lora_name: 'videogen/style.safetensors', strength_model: 0.5 });
+      expect(out['vg-lora-low1'].inputs).toEqual({ model: [low, 0], lora_name: 'videogen/orbit__low.safetensors', strength_model: 0.8 });
+      expect(out['vg-lora-low2'].inputs.lora_name).toBe('videogen/style.safetensors');
+      expect(out['vg-lora-high3']).toBeUndefined();
+      // La LoRA lightx2v (mode rapide) et le commutateur lisent la sortie des LoRA choisies.
+      const users = (node: string) => Object.entries(out).flatMap(([k, n]) => Object.entries(n.inputs).filter(([, v]) => Array.isArray(v) && v[0] === node).map(([i]) => `${out[k].class_type}.${i}`));
+      expect(users(high)).toEqual(['LoraLoaderModelOnly.model']);
+      expect(users('vg-lora-high2').sort()).toEqual(['ComfySwitchNode.on_false', 'LoraLoaderModelOnly.model']);
+      expect(users('vg-lora-low2').sort()).toEqual(['ComfySwitchNode.on_false', 'LoraLoaderModelOnly.model']);
+      expect(checkAvailability(out, info).missingNodes).toEqual([]);
+    });
+  }
+  it('Wan 2.2 5B : une seule chaîne ; expert deviné d’après le nom de fichier', () => {
+    const m = reg.models.find((x) => x.id === 'wan22-5b-t2v')!;
+    const out = buildPrompt(reg, m, wf(m.workflow), { prompt: 'x', preset: m.resolution.default, ratio: '16:9', duration: m.duration.default, fps: m.fps.default, seed: 1, outputPrefix: 'p', loras: [{ name: 'videogen/a.safetensors', strength: 1 }] });
+    expect(out['vg-lora1'].inputs.model).toEqual(['37', 0]);
+    expect(out['48'].inputs.model).toEqual(['vg-lora1', 0]);
+    expect(guessTarget('videogen/orbit__Wan22_high_noise.safetensors')).toBe('high');
+    expect(guessTarget('videogen/orbit-LOW-noise.safetensors')).toBe('low');
+    expect(guessTarget('videogen/cinematic.safetensors')).toBe('both');
+    expect(guessBase(parseHfLink('org/wan2.2-ti2v-5b-ink/a.safetensors'))).toBe('wan22s');
+    expect(guessBase(parseHfLink('org/Wan2.2-orbit/high.safetensors'))).toBe('wan22');
+  });
+  it('modèle sans LoRA (Wan 2.1 1.3B) : option ignorée', () => {
     const m = reg.models.find((x) => x.id === 'wan21-1.3b-t2v')!;
     const out = buildPrompt(reg, m, wf(m.workflow), { prompt: 'x', preset: m.resolution.default, ratio: '16:9', duration: m.duration.default, fps: m.fps.default, seed: 1, outputPrefix: 'p', loras: [{ name: 'videogen/a.safetensors', strength: 1 }] });
     expect(Object.keys(out).some((k) => k.startsWith('vg-lora'))).toBe(false);

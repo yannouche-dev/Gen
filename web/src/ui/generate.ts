@@ -415,7 +415,7 @@ export class GenerateScreen {
           return h('div', { class: 'field' }, h('label', { class: 'check' }, c, ` ${opts.enhancePrompt!.label}`), h('small', { class: 'hint' }, 'Gemma réécrit et enrichit ton prompt avant la génération ; le prompt utilisé s’affiche avec le résultat.'));
         })()
       : null;
-    const loraBox = m.lora ? loraPicker(m.lora.base, st.loras, () => undefined, () => this.renderForm()) : null;
+    const loraBox = m.lora ? loraPicker(m.lora.base, st.loras, () => undefined, () => this.renderForm(), 'lora', !!m.lora.pair) : null;
     const modelOptions =
       extraFields.length || enhanceBox || loraBox
         ? h('section', { class: 'model-options', 'data-testid': 'model-options' }, h('h3', null, `Options ${reg.families[m.family]?.label ?? ''}`), enhanceBox, ...extraFields, loraBox)

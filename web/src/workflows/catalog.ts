@@ -15,8 +15,9 @@ export interface CatalogBase {
 export const CATALOG_BASES: Record<string, CatalogBase> = {
   ltx25: { label: 'LTX-2.5 (vidéo)', ids: ['Lightricks/LTX-2.5'], search: ['ltx-2.5', 'ltx2.5'], nameRe: /ltx[-_. ]?2[-_. ]?5/i },
   flux2dev: { label: 'FLUX.2 Dev (Studio BD)', ids: ['black-forest-labs/FLUX.2-dev'], search: ['flux.2', 'flux2'], nameRe: /flux[-_. ]?2(?![0-9])/i },
-  wan22: { label: 'Wan 2.2 (14B)', ids: ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.2-T2V-A14B'], search: ['wan2.2', 'wan 2.2'], nameRe: /wan[-_. ]?2[-_. ]?2/i },
-  wan22s: { label: 'Wan 2.2 (5B)', ids: ['Wan-AI/Wan2.2-TI2V-5B'], search: ['wan2.2', 'wan 2.2 5b'], nameRe: /wan[-_. ]?2[-_. ]?2/i },
+  // Recherche par nom : « 5B » ou « TI2V » dans le nom → modèle 5B, sinon 14B (high / low noise).
+  wan22: { label: 'Wan 2.2 (14B)', ids: ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.2-T2V-A14B'], search: ['wan2.2', 'wan 2.2'], nameRe: /^(?!.*(5b|ti2v)).*wan[-_. ]?2[-_. ]?2/i },
+  wan22s: { label: 'Wan 2.2 (5B)', ids: ['Wan-AI/Wan2.2-TI2V-5B'], search: ['wan2.2', 'wan 2.2 5b'], nameRe: /^(?=.*(5b|ti2v)).*wan[-_. ]?2[-_. ]?2/i },
 };
 
 export type CatalogSort = 'downloads' | 'likes' | 'lastModified';

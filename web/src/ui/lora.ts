@@ -6,7 +6,7 @@ import { app, BUILD } from './context.ts';
 import { journal } from '../core/journal.ts';
 import { vault } from '../core/vault.ts';
 import { requestJson, HttpError } from '../core/http.ts';
-import { guessBase, loraFileName, parseHfLink, LORA_BASES, MAX_LORAS, type HfLink, type LoraChoice, type SavedLora } from '../workflows/lora.ts';
+import { guessBase, guessTarget, loraFileName, parseHfLink, LORA_BASES, MAX_LORAS, type HfLink, type LoraChoice, type SavedLora } from '../workflows/lora.ts';
 import { catalogPage, catalogQueries, mergeCatalog, CATALOG_BASES, type CatalogItem, type CatalogSort } from '../workflows/catalog.ts';
 
 /** Fichiers .safetensors d'un dépôt (API Hugging Face, appelée depuis le navigateur). */
@@ -255,6 +255,9 @@ export class LoraCard {
 
   /** Installe depuis un lien : fichier direct, ou choix du fichier quand le dépôt en a plusieurs. */
   private async installFrom(l: HfLink, base: string) {
+    // Lien saisi au moment de l'installation : on ne vide le champ que s'il n'a pas changé entre-temps
+    // (on peut coller la LoRA suivante pendant que la première s'installe).
+    const typed = this.draft;
     if (!l.path) {
       const files = await listRepoFiles(l).catch((e) => {
         throw new Error(`liste des fichiers impossible (${errMessage(e)}) : colle le lien complet du fichier .safetensors`);
@@ -269,7 +272,11 @@ export class LoraCard {
       }
       l = { ...l, path: files[0] };
     }
-    if (await install({ repo: l.repo, path: l.path!, revision: l.revision, base })) this.reset();
+    if (await install({ repo: l.repo, path: l.path!, revision: l.revision, base })) {
+      this.pending = null;
+      if (this.draft === typed) this.draft = '';
+      this.render();
+    }
   }
 
   private async fromCatalog(repo: string, base: string) {
@@ -281,12 +288,6 @@ export class LoraCard {
     } catch (e) {
       toast(errMessage(e), 'error');
     }
-  }
-
-  private reset() {
-    this.draft = '';
-    this.pending = null;
-    this.render();
   }
 
   private async remove(name: string, repo?: string, path?: string) {
@@ -306,7 +307,7 @@ export class LoraCard {
  * Sélecteur de LoRA (jusqu'à 3) pour un modèle de base. `value` est modifié sur place ; `onChange` est appelé
  * à chaque changement (enregistrement), `rerender` quand le nombre de lignes change.
  */
-export function loraPicker(base: string, value: LoraChoice[], onChange: () => void, rerender: () => void, testid = 'lora'): HTMLElement {
+export function loraPicker(base: string, value: LoraChoice[], onChange: () => void, rerender: () => void, testid = 'lora', pair = false): HTMLElement {
   const installed = app.lorasFor(base);
   const rows = value.map((l, i) => {
     const sel = h('select', { class: 'input', 'data-testid': `${testid}-name-${i + 1}` }) as HTMLSelectElement;
@@ -315,159 +316,17 @@ export function loraPicker(base: string, value: LoraChoice[], onChange: () => vo
     for (const x of installed) sel.append(h('option', { value: x.name, selected: x.name === l.name }, x.file.replace(/\.safetensors$/, '')));
     sel.addEventListener('change', () => {
       l.name = sel.value;
+      if (pair) l.target = guessTarget(l.name);
       onChange();
+      if (pair) rerender();
     });
-    const out = h('span', { class: 'hint' }, l.strength.toFixed(2));
-    const range = h('input', { type: 'range', min: -1, max: 2, step: 0.05, value: String(l.strength), class: 'range', 'data-testid': `${testid}-strength-${i + 1}`, 'aria-label': 'Force' }) as HTMLInputElement;
-    range.addEventListener('input', () => {
-      l.strength = Number(range.value);
-      out.textContent = l.strength.toFixed(2);
-      onChange();
-    });
-    const del = h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Retirer la LoRA', on: { click: () => {
-      value.splice(i, 1);
-      onChange();
-      rerender();
-    } } }, '✕');
-    return h('div', { class: 'lora-row' }, h('div', { class: 'row' }, sel, del), h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Force'), range, out));
-  });
-  const add = installed.length && value.length < MAX_LORAS
-    ? h('button', { type: 'button', class: 'btn btn-small', 'data-testid': `${testid}-add`, on: { click: () => {
-        value.push({ name: installed.find((x) => !value.some((v) => v.name === x.name))?.name ?? installed[0].name, strength: 1 });
-        onChange();
-        rerender();
-      } } }, '+ Ajouter une LoRA')
-    : null;
-  return h(
-    'div',
-    { class: 'field', 'data-testid': `${testid}-picker` },
-    h('span', { class: 'field-label' }, `LoRA · ${LORA_BASES[base] ?? base}`),
-    ...rows,
-    add,
-    !installed.length
-      ? h('small', { class: 'hint' }, app.manager.state.phase === 'ready' ? 'Aucune LoRA installée pour ce modèle : onglet Instance → LoRA.' : 'Les LoRA se choisissent quand l’instance est prête.')
-      : null,
-  );
-}
-e.addEventListener('change', () => (this.base = base.value));
-    link.addEventListener('change', () => {
-      try {
-        this.base = guessBase(parseHfLink(link.value));
-        base.value = this.base;
-      } catch {
-        /* lien incomplet : on attend */
-      }
-    });
-    const fileSel = this.pending
-      ? (h('select', { class: 'input', 'data-testid': 'lora-file' }, ...this.pending.files.map((f) => h('option', { value: f }, f))) as HTMLSelectElement)
+    // Wan 2.2 14B : expert visé (les LoRA sont souvent publiées par paires high / low noise).
+    const target = pair
+      ? (h('select', { class: 'input', 'data-testid': `${testid}-target-${i + 1}`, 'aria-label': 'S’applique à' },
+          ...([['both', 'Les deux modèles'], ['high', 'High noise (début)'], ['low', 'Low noise (fin)']] as const).map(([k, t]) => h('option', { value: k, selected: (l.target ?? 'both') === k }, t))) as HTMLSelectElement)
       : null;
-    const go = h('button', { type: 'button', class: 'btn btn-primary btn-big', 'data-testid': 'lora-install' }, this.pending ? 'Installer ce fichier' : 'Installer');
-    go.addEventListener('click', async () => {
-      go.disabled = true;
-      try {
-        await this.installFrom(this.pending ? { ...this.pending.link, path: fileSel!.value } : parseHfLink(link.value), base.value);
-      } catch (e) {
-        toast(errMessage(e), 'error');
-      } finally {
-        go.disabled = false;
-      }
-    });
-
-    const { list, jobs } = app.loras;
-    const missing = app.settings.savedLoras.filter((s) => !list.some((l) => l.file === loraFileName(s.repo, s.path)) && !jobs.some((j) => j.file === loraFileName(s.repo, s.path) && j.state === 'downloading'));
-    replace(
-      this.el,
-      h('h2', null, 'LoRA'),
-      h('p', { class: 'hint' }, 'Colle le lien Hugging Face d’une LoRA (fichier .safetensors, ou dépôt pour choisir le fichier). L’instance la télécharge avec ton token HF ; elle devient utilisable aussitôt dans Générer (LTX-2.5) ou dans le Style du Studio BD (FLUX.2).'),
-      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Lien Hugging Face'), link),
-      fileSel ? h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Fichier'), fileSel) : null,
-      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Faite pour'), base),
-      h('small', { class: 'hint' }, 'Une LoRA ne marche que sur le modèle pour lequel elle a été entraînée (une LoRA LTX-2 19B ne marche pas sur LTX-2.5).'),
-      go,
-      ...jobs.map((j) =>
-        h('p', { class: `msg ${j.state === 'error' ? 'err' : 'info'}`, 'data-testid': 'lora-job' },
-          j.state === 'error' ? `${j.file} : ${j.error}` : `Téléchargement de ${j.file} : ${j.size ? Math.round((j.done / j.size) * 100) : 0} %${j.size ? ` de ${fmtBytes(j.size)}` : ''}`),
-      ),
-      list.length
-        ? h('ul', { class: 'lora-list' }, ...list.map((l) =>
-            h('li', { 'data-testid': 'lora-item' },
-              h('span', { class: 'lora-name' }, l.file.replace(/\.safetensors$/, '')),
-              h('small', { class: 'hint' }, ` ${LORA_BASES[l.base ?? ''] ?? 'base inconnue'} · ${fmtBytes(l.size)}`),
-              h('button', { type: 'button', class: 'btn btn-small btn-danger', 'aria-label': `Supprimer ${l.file}`, 'data-testid': 'lora-delete', on: { click: () => void this.remove(l.name, l.repo ?? undefined, l.path ?? undefined) } }, 'Supprimer'),
-            )))
-        : h('p', { class: 'hint' }, 'Aucune LoRA installée sur cette instance.'),
-      missing.length
-        ? h('button', { type: 'button', class: 'btn', 'data-testid': 'lora-reinstall', on: { click: async () => {
-            for (const s of missing) await install(s);
-          } } }, `Réinstaller mes LoRA (${missing.length})`)
-        : null,
-      this.catalog.el,
-    );
-    this.catalog.render();
-  }
-
-  /** Installe depuis un lien : fichier direct, ou choix du fichier quand le dépôt en a plusieurs. */
-  private async installFrom(l: HfLink, base: string) {
-    if (!l.path) {
-      const files = await listRepoFiles(l).catch((e) => {
-        throw new Error(`liste des fichiers impossible (${errMessage(e)}) : colle le lien complet du fichier .safetensors`);
-      });
-      if (!files.length) throw new Error('aucun fichier .safetensors dans ce dépôt');
-      if (files.length > 1) {
-        this.pending = { link: l, files };
-        this.render();
-        this.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast(`Choisis le fichier à installer (${files.length} dans ce dépôt)`, 'info');
-        return;
-      }
-      l = { ...l, path: files[0] };
-    }
-    if (await install({ repo: l.repo, path: l.path!, revision: l.revision, base })) this.reset();
-  }
-
-  private async fromCatalog(repo: string, base: string) {
-    if (app.manager.state.phase !== 'ready' || !app.manager.comfy) return void toast('Démarre d’abord l’instance pour installer une LoRA', 'error');
-    this.base = base;
-    this.draft = `https://huggingface.co/${repo}`;
-    try {
-      await this.installFrom({ repo, path: null, revision: 'main' }, base);
-    } catch (e) {
-      toast(errMessage(e), 'error');
-    }
-  }
-
-  private reset() {
-    this.draft = '';
-    this.pending = null;
-    this.render();
-  }
-
-  private async remove(name: string, repo?: string, path?: string) {
-    if (!(await confirmDialog({ title: 'Supprimer cette LoRA ?', body: ['Elle est effacée du disque de l’instance et oubliée par ce navigateur.'], ok: 'Supprimer', danger: true }))) return;
-    try {
-      await app.manager.comfy!.deleteLora(name);
-      if (repo && path) app.saveSettings({ savedLoras: app.settings.savedLoras.filter((x) => !(x.repo === repo && x.path === path)) });
-      toast('LoRA supprimée', 'ok');
-    } catch (e) {
-      toast(`Suppression impossible : ${errMessage(e)}`, 'error');
-    }
-    await app.refreshLoras();
-  }
-}
-
-/**
- * Sélecteur de LoRA (jusqu'à 3) pour un modèle de base. `value` est modifié sur place ; `onChange` est appelé
- * à chaque changement (enregistrement), `rerender` quand le nombre de lignes change.
- */
-export function loraPicker(base: string, value: LoraChoice[], onChange: () => void, rerender: () => void, testid = 'lora'): HTMLElement {
-  const installed = app.lorasFor(base);
-  const rows = value.map((l, i) => {
-    const sel = h('select', { class: 'input', 'data-testid': `${testid}-name-${i + 1}` }) as HTMLSelectElement;
-    const known = installed.some((x) => x.name === l.name);
-    if (!known) sel.append(h('option', { value: l.name, selected: true }, `${l.name.replace(/^videogen\//, '')} (absente de l’instance)`));
-    for (const x of installed) sel.append(h('option', { value: x.name, selected: x.name === l.name }, x.file.replace(/\.safetensors$/, '')));
-    sel.addEventListener('change', () => {
-      l.name = sel.value;
+    target?.addEventListener('change', () => {
+      l.target = target.value as LoraChoice['target'];
       onChange();
     });
     const out = h('span', { class: 'hint' }, l.strength.toFixed(2));
@@ -482,11 +341,12 @@ export function loraPicker(base: string, value: LoraChoice[], onChange: () => vo
       onChange();
       rerender();
     } } }, '✕');
-    return h('div', { class: 'lora-row' }, h('div', { class: 'row' }, sel, del), h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Force'), range, out));
+    return h('div', { class: 'lora-row' }, h('div', { class: 'row' }, sel, del), target ? h('div', { class: 'row' }, h('span', { class: 'hint' }, 'S’applique à'), target) : null, h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Force'), range, out));
   });
   const add = installed.length && value.length < MAX_LORAS
     ? h('button', { type: 'button', class: 'btn btn-small', 'data-testid': `${testid}-add`, on: { click: () => {
-        value.push({ name: installed.find((x) => !value.some((v) => v.name === x.name))?.name ?? installed[0].name, strength: 1 });
+        const name = installed.find((x) => !value.some((v) => v.name === x.name))?.name ?? installed[0].name;
+        value.push(pair ? { name, strength: 1, target: guessTarget(name) } : { name, strength: 1 });
         onChange();
         rerender();
       } } }, '+ Ajouter une LoRA')
