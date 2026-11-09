@@ -132,6 +132,7 @@ export const STYLES: StylePreset[] = [
   { id: 'polar', label: 'Polar noir et blanc', prompt: 'noir graphic novel, high-contrast black and white ink, heavy shadows, rain and city lights' },
   { id: 'cartoon', label: 'Cartoon jeunesse', prompt: 'friendly cartoon style for children, rounded shapes, thick outlines, cheerful saturated colors' },
   { id: 'realiste', label: 'BD réaliste peinte', prompt: 'realistic painted graphic novel art, detailed rendering, cinematic lighting, rich colors' },
+  { id: 'roman-photo', label: 'Roman photo réaliste', prompt: 'photorealistic photo novel, real photographs of real people, cinematic stills, natural lighting, high detail skin and clothing, no illustration, no drawing, no cartoon, photographic style' },
 ];
 
 export const TONES: [string, string][] = [
