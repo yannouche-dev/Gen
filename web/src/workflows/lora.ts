@@ -169,3 +169,11 @@ export const DEFAULT_LTX_LORAS: SavedLora[] = [
     base: 'ltx25',
   },
 ];
+
+/** LoRA FLUX.2 recommandée pour le Studio BD (installée automatiquement). */
+export const DEFAULT_FLUX_LORA: SavedLora = {
+  repo: 'salomonsky/flux-lora-uncensored',
+  path: 'flux-lora-uncensored.safetensors',
+  revision: 'main',
+  base: 'flux2dev',
+};
