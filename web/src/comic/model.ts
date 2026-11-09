@@ -342,24 +342,27 @@ export function storyPrompt(p: Project, pages: number): string {
   const outline = (p.outline ?? []).map((o, i) => `Page ${i + 1}: ${o}`).join('\n');
   return [
     'You are an experienced comic book writer and storyboard artist.',
-    `Split the story below into exactly ${pages} comic page(s). Each page has between 3 and 6 panels with varied framing.`,
+    `Split the story into exactly ${pages} page(s). Each page must contain between 3 and 6 panels.`,
     `Art style: ${style}.${p.tone ? ` Tone: ${p.tone}.` : ''}`,
-    'Characters (use these exact names):',
+    'Characters (use these exact names only):',
     cast,
-    ...(places ? ['Settings (use these exact names):', places] : []),
-    'Story:',
+    ...(places ? ['Settings (use these exact names only):', places] : []),
+    'Story to adapt:',
     p.synopsis.trim(),
-    ...(outline ? ['Page-by-page outline to follow strictly:', outline] : []),
+    ...(outline ? ['Follow this page outline strictly:', outline] : []),
     '',
-    'Continuity rules: every panel follows logically from the previous one; characters keep the same outfit, hairstyle and props unless the story changes them; time of day and weather stay consistent within a scene; the last page ends the story with a clear payoff.',
-    'Keep it tasteful: romance, flirting and innuendo are fine, but no nudity and no explicit sexual content.',
-    'Return ONLY valid JSON, no comments, with this exact structure:',
-    '{"pages":[{"panels":[{"description":"<what is visible in the panel, in English, concrete visual details, actions, expressions, lighting; no text>",' +
-      '"characters":["<names present>"],' +
-      (places ? '"setting":"<one setting name>",' : '') +
-      '"shot":"<wide|medium|close-up|extreme close-up|over-the-shoulder|low angle|high angle|bird’s-eye view>",' +
-      '"dialogues":[{"speaker":"<name>","text":"<line in French>"}],"caption":"<short French narration or empty string>"}]}]}',
-    'Dialogues and captions must be in French, short (at most 20 words each), at most 2 dialogues per panel.',
+    'Rules:',
+    '- Every panel follows logically from the previous one.',
+    '- Keep character appearance consistent unless the story changes it.',
+    '- Descriptions must be concrete visual details in English (actions, expressions, lighting, framing). No dialogue text inside descriptions.',
+    '- Last page must give a clear ending or payoff.',
+    '- Output ONLY a single valid JSON object. No markdown, no comments, no extra text.',
+    '',
+    'JSON structure (exact keys):',
+    '{"pages":[{"panels":[{"description":"English visual description","characters":["name"],' +
+      (places ? '"setting":"setting name",' : '') +
+      '"shot":"medium","dialogues":[{"speaker":"name","text":"French line"}],"caption":"French caption or empty"}]}]}',
+    'Dialogues and captions in French, max 20 words each, max 2 dialogues per panel. Shot must be one of: wide, medium, close-up, extreme close-up, over-the-shoulder, low angle, high angle, bird’s-eye view.',
   ].join('\n');
 }
 
