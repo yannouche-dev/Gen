@@ -15,6 +15,7 @@ import { confirmDialog } from './dialog.ts';
 import { loraPicker } from './lora.ts';
 import type { LoraChoice } from '../workflows/lora.ts';
 import { DEFAULT_LTX_LORAS, loraFileName } from '../workflows/lora.ts';
+import { DEFAULT_LTX_LORAS, loraFileName } from '../workflows/lora.ts';
 
 interface FormState {
   modelId: string;
@@ -160,7 +161,20 @@ export class GenerateScreen {
       extras: Object.fromEntries((m.extras ?? []).map((x) => [x.key, this.st?.extras?.[x.key] ?? x.default])),
       variants: this.st?.variants ?? 1,
       // LoRA gardées si le nouveau modèle a la même base (ex. LTX t2v → i2v).
-      loras: m.lora && this.st && app.model(this.st.modelId)?.lora?.base === m.lora.base ? this.st.loras.map((l) => ({ ...l })) : [],
+      loras: (() => {
+        if (m.lora && this.st && app.model(this.st.modelId)?.lora?.base === m.lora.base) return this.st.loras.map((l) => ({ ...l }));
+        if (m.lora?.base === "ltx25") {
+          const installed = app.lorasFor("ltx25");
+          return DEFAULT_LTX_LORAS
+            .map((d) => {
+              const file = loraFileName(d.repo, d.path);
+              const found = installed.find((x) => x.file === file);
+              return found ? { name: found.name, strength: 0.6 } : null;
+            })
+            .filter((x): x is LoraChoice => x !== null);
+        }
+        return [];
+      })(),
     };
   }
 
