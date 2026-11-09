@@ -653,7 +653,12 @@ export class ComicScreen {
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Nombre de pages'), pages),
       h('button', { type: 'button', class: 'btn btn-primary btn-big', disabled: !!this.busy, 'data-testid': 'story-split', on: { click: () => void this.split(Number(pages.value)) } }, 'Découper avec l’IA (pages, cases, dialogues)'),
       status,
-      h('button', { type: 'button', class: 'btn', 'data-testid': 'add-page', on: { click: () => void this.addPage() } }, '+ Ajouter une page vide'),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn', 'data-testid': 'add-page', on: { click: () => void this.addPage() } }, '+ Ajouter une page vide'),
+        p.pages.length || p.synopsis.trim()
+          ? h('button', { type: 'button', class: 'btn btn-danger', 'data-testid': 'reset-story', on: { click: () => void this.resetStory() } }, 'Réinitialiser l’histoire et les pages')
+          : null,
+      ),
       p.pages.length ? h('p', { class: 'hint' }, `${p.pages.length} page(s), ${p.pages.reduce((n, pg) => n + pg.panels.length, 0)} case(s). Voir l’étape Pages.`) : null,
     ));
   }
@@ -664,14 +669,19 @@ export class ComicScreen {
     if (!this.ready('qwen')) return;
     return this.guard('découpage de l’histoire', async () => {
       if (p.pages.length && !(await confirmDialog({ title: 'Remplacer les pages existantes ?', body: ['Le découpage proposé par l’IA remplacera tes pages actuelles (les images des cases seront supprimées).'], ok: 'Remplacer', danger: true }))) return;
-      const text = await this.runText('story', 'Qwen 3.5 · découpage', storyPrompt(p, pages), null, 4096, 0.6);
       let story;
-      try {
-        story = parseStory(text);
-      } catch (e) {
-        journal.warn('bd', 'Réponse de l’IA illisible', text.slice(0, 3000));
-        throw new Error(`Réponse de l’IA illisible (${e instanceof Error ? e.message : e}) : relance le découpage`);
+      let lastErr: unknown;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const text = await this.runText('story', `Qwen 3.5 · découpage (essai ${attempt})`, storyPrompt(p, pages), null, 4096, 0.5);
+        try {
+          story = parseStory(text);
+          break;
+        } catch (e) {
+          lastErr = e;
+          journal.warn('bd', `Découpage illisible (essai ${attempt})`, text.slice(0, 3000));
+        }
       }
+      if (!story) throw new Error(`Réponse de l’IA illisible (${lastErr instanceof Error ? lastErr.message : lastErr}) : relance le découpage`);
       for (const pg of p.pages) for (const pa of pg.panels) if (pa.imageId) await deleteImage(pa.imageId).catch(() => undefined);
       p.pages = storyToPages(p, story);
       this.pageIdx = 0;
@@ -680,6 +690,24 @@ export class ComicScreen {
       this.step = 'pages';
       toast('Découpage prêt : vérifie et modifie les cases', 'ok');
     });
+  }
+
+  private async resetStory() {
+    const p = this.p!;
+    if (!(await confirmDialog({
+      title: 'Réinitialiser l’histoire et les pages ?',
+      body: ['Le synopsis, le découpage et toutes les pages seront effacés. Les images des cases seront supprimées. Cette action est irréversible.'],
+      ok: 'Tout effacer',
+      danger: true,
+    }))) return;
+    for (const pg of p.pages) for (const pa of pg.panels) if (pa.imageId) await deleteImage(pa.imageId).catch(() => undefined);
+    p.synopsis = '';
+    p.outline = [];
+    p.pages = [];
+    this.pageIdx = 0;
+    await this.save(true);
+    toast('Histoire et pages réinitialisées', 'ok');
+    this.render();
   }
 
   private async addPage() {
